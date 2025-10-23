@@ -6,7 +6,10 @@ import random
 import time
 import math
 from typing import List, Dict, Optional, Tuple
-from ..models.entities import Order, Depot, Drone, OrderStatus, Position, Store, Customer
+# (수정) DroneStatus 임포트
+from ..models.entities import (
+    Order, Depot, Drone, OrderStatus, DroneStatus, Position, Store, Customer
+)
 from .clustering import MixedClustering
 from .routing import DroneRouteOptimizer, SimpleRouting, MultiLevelAStarRouting
 import config
@@ -25,10 +28,8 @@ class OrderGenerator:
             random.seed(self.seed)
     
     def generate_random_order(self, current_time: float) -> Optional[Order]:
-        """Generate a random order if enough time has passed"""
         time_since_last = current_time - self.last_generation_time
         
-        # Calculate probability of generating an order
         probability = self.generation_rate * time_since_last
         
         if random.random() < probability:
@@ -38,29 +39,21 @@ class OrderGenerator:
         return None
     
     def _create_random_order(self, current_time: float) -> Order:
-        """Create a random order between a customer and a store (3D)
-        
-        Note: self.map.customers and self.map.stores now contain Store and Customer
-        entities (not Buildings), each representing a floor in a building.
-        """
-        # Get available customers and stores (already Store/Customer objects)
-        customers = self.map.customers  # List[Customer]
-        stores = self.map.stores  # List[Store]
+        customers = self.map.customers
+        stores = self.map.stores
         
         if not customers or not stores:
             return None
         
-        # Randomly select customer and store (these are floor-level entities)
         customer_entity = random.choice(customers)
         store_entity = random.choice(stores)
         
-        # Create order with 3D positions
         order = Order(
             id=self.order_counter,
             customer_id=customer_entity.id,
             store_id=store_entity.id,
-            customer_position=customer_entity.get_center(),  # 3D position at floor level
-            store_position=store_entity.get_center(),  # 3D position at floor level
+            customer_position=customer_entity.get_center(),
+            store_position=store_entity.get_center(),
             created_time=current_time
         )
         
@@ -68,7 +61,6 @@ class OrderGenerator:
         return order
     
     def generate_batch_orders(self, current_time: float, batch_size: int = 5) -> List[Order]:
-        """Generate multiple orders at once for testing"""
         orders = []
         for _ in range(batch_size):
             order = self._create_random_order(current_time)
@@ -78,25 +70,21 @@ class OrderGenerator:
 
 
 class DepotSelector:
-    """Selects the best depot for a given order"""
     
     def __init__(self, map_obj):
         self.map = map_obj
         self.clustering_algorithm = MixedClustering()
     
     def select_best_depot(self, order: Order) -> Optional[Depot]:
-        """Select the best depot for an order based on multiple criteria"""
         if not self.map.depots:
             return None
         
-        # Calculate scores for each depot
         depot_scores = {}
         
         for depot in self.map.depots:
             score = self._calculate_depot_score(depot, order)
             depot_scores[depot.id] = score
         
-        # Select depot with highest score
         if depot_scores:
             best_depot_id = max(depot_scores.keys(), key=lambda k: depot_scores[k])
             return next(depot for depot in self.map.depots if depot.id == best_depot_id)
@@ -104,43 +92,31 @@ class DepotSelector:
         return None
     
     def _calculate_depot_score(self, depot: Depot, order: Order) -> float:
-        """Calculate a score for depot-order assignment using 3D distances"""
-        # Check if depot has available drones
         available_drones = depot.get_available_drones()
         if not available_drones:
-            return 0.0  # No available drones
+            return 0.0
         
-        # Distance from depot to store (3D Euclidean distance)
         depot_to_store_distance = depot.get_center().distance_to(order.store_position)
         
-        # Distance from store to customer (3D Euclidean distance)
         store_to_customer_distance = order.get_distance()
         
-        # Total distance
         total_distance = depot_to_store_distance + store_to_customer_distance
         
-        # Distance from customer back to depot (return trip, 3D)
         customer_to_depot_distance = order.customer_position.distance_to(depot.get_center())
         
-        # Complete trip distance (3D)
         complete_trip_distance = total_distance + customer_to_depot_distance
         
-        # Calculate score (lower distance = higher score)
-        # Add bonus for having available drones
         drone_bonus = len(available_drones) * 10
         
-        # Distance penalty (inverse relationship)
         distance_score = max(0, 1000 - complete_trip_distance)
         
-        # Battery consideration (simplified)
-        battery_score = 100  # Assume all drones have good battery
+        battery_score = 100
         
         total_score = distance_score + drone_bonus + battery_score
         
         return total_score
     
     def get_depot_assignment_metrics(self, orders: List[Order]) -> Dict[int, Dict]:
-        """Analyze depot assignment patterns"""
         depot_stats = {}
         
         for depot in self.map.depots:
@@ -152,22 +128,19 @@ class DepotSelector:
                 'total_distance': 0.0
             }
         
-        # Analyze orders
         for order in orders:
             if order.assigned_drone and order.assigned_drone.depot:
                 depot_id = order.assigned_drone.depot.id
                 if depot_id in depot_stats:
                     depot_stats[depot_id]['total_orders'] += 1
                     
-                    # Calculate distance for this order
                     depot = order.assigned_drone.depot
                     distance = (depot.position.distance_to(order.store_position) + 
-                              order.store_position.distance_to(order.customer_position) +
-                              order.customer_position.distance_to(depot.position))
+                                order.store_position.distance_to(order.customer_position) +
+                                order.customer_position.distance_to(depot.position))
                     
                     depot_stats[depot_id]['total_distance'] += distance
         
-        # Calculate averages
         for depot_id, stats in depot_stats.items():
             if stats['total_orders'] > 0:
                 stats['avg_distance'] = stats['total_distance'] / stats['total_orders']
@@ -176,7 +149,6 @@ class DepotSelector:
 
 
 class OrderManager:
-    """Manages the complete order lifecycle (3D)"""
     
     def __init__(self, map_obj, seed: Optional[int] = None):
         self.map = map_obj
@@ -185,21 +157,17 @@ class OrderManager:
         self.order_generator = OrderGenerator(map_obj, seed=seed)
         self.depot_selector = DepotSelector(map_obj)
         
-        # Use 3D multi-level A* routing for obstacle avoidance
-        print("  Initializing 3D routing...")
-        self.route_optimizer = DroneRouteOptimizer(MultiLevelAStarRouting(map_obj, k_levels=10))
+        print("  Initializing 3D routing...")
+        self.route_optimizer = DroneRouteOptimizer(MultiLevelAStarRouting(map_obj, k_levels=3))
     
     def process_orders(self, current_time: float) -> List[Order]:
-        """Process pending orders and generate new ones"""
-        # Generate new orders
         new_order = self.order_generator.generate_random_order(current_time)
         if new_order:
             self.orders.append(new_order)
             print(f"New order generated: Customer {new_order.customer_id} -> Store {new_order.store_id}")
         
-        # Process pending orders
         new_completed = []
-        for order in self.orders[:]:  # Copy to avoid modification during iteration
+        for order in self.orders[:]:
             if order.status == OrderStatus.PENDING:
                 self._assign_order_to_depot(order)
             elif order.status == OrderStatus.COMPLETED:
@@ -214,7 +182,6 @@ class OrderManager:
         return new_completed
     
     def _assign_order_to_depot(self, order: Order):
-        """Assign an order to the best available depot and drone"""
         best_depot = self.depot_selector.select_best_depot(order)
         
         if best_depot:
@@ -223,22 +190,36 @@ class OrderManager:
                 order.assigned_drone = assigned_drone
                 order.status = OrderStatus.ASSIGNED
                 
-                # Calculate and set route for the drone
                 try:
                     route = self.route_optimizer.optimize_delivery_route(assigned_drone, order)
-                    assigned_drone.start_delivery(route)
-                    print(f"Order {order.id} assigned to depot {best_depot.id}, drone {assigned_drone.id} with route")
+                    
+                    # (수정) 경로 탐색 실패 시 할당 해제
+                    if not route or len(route) < 2:
+                        print(f"Order {order.id} route calculation FAILED. Releasing drone and order.")
+                        order.status = OrderStatus.PENDING
+                        order.assigned_drone = None
+                        assigned_drone.current_order = None
+                        assigned_drone.status = DroneStatus.IDLE
+                    else:
+                        assigned_drone.start_delivery(route)
+                        print(f"Order {order.id} assigned to depot {best_depot.id}, drone {assigned_drone.id} with route")
+                
                 except Exception as e:
                     print(f"Failed to set route for order {order.id}: {e}")
-                    # Still assign the order even if route setting fails
+                    # (수정) 예외 발생 시에도 할당 해제
+                    order.status = OrderStatus.PENDING
+                    order.assigned_drone = None
+                    assigned_drone.current_order = None
+                    assigned_drone.status = DroneStatus.IDLE
                 
             else:
-                print(f"No available drones at depot {best_depot.id} for order {order.id}")
+                # print(f"No available drones at depot {best_depot.id} for order {order.id}")
+                pass
         else:
-            print(f"No suitable depot found for order {order.id}")
+            # print(f"No suitable depot found for order {order.id}")
+            pass
     
     def get_order_statistics(self) -> Dict:
-        """Get statistics about orders"""
         total_orders = len(self.orders) + len(self.completed_orders)
         pending_orders = len([o for o in self.orders if o.status == OrderStatus.PENDING])
         assigned_orders = len([o for o in self.orders if o.status == OrderStatus.ASSIGNED])
@@ -260,7 +241,6 @@ class OrderManager:
         }
     
     def generate_test_orders(self, num_orders: int = 10, current_time: float = None) -> List[Order]:
-        """Generate test orders for simulation"""
         if current_time is None:
             current_time = time.time()
         
@@ -271,7 +251,6 @@ class OrderManager:
         return test_orders
     
     def assign_all_pending_orders(self):
-        """Assign all pending orders to depots (for testing)"""
         pending_orders = [o for o in self.orders if o.status == OrderStatus.PENDING]
         
         for order in pending_orders:
@@ -280,7 +259,6 @@ class OrderManager:
         print(f"Assigned {len(pending_orders)} pending orders with routes")
     
     def get_depot_load_balancing_info(self) -> Dict:
-        """Get information about depot load balancing"""
         depot_info = {}
         
         for depot in self.map.depots:
@@ -288,7 +266,6 @@ class OrderManager:
             available_drones = len(depot.get_available_drones())
             busy_drones = total_drones - available_drones
             
-            # Avoid division by zero
             utilization_rate = 0.0
             if total_drones > 0:
                 utilization_rate = (busy_drones / total_drones) * 100
@@ -304,29 +281,22 @@ class OrderManager:
 
 
 class OrderValidator:
-    """Validates orders for feasibility and constraints"""
     
     @staticmethod
     def validate_order_feasibility(order: Order, drone: Drone) -> bool:
-        """Check if an order can be feasibly delivered by a drone"""
-        # Check distance constraints
         total_distance = (drone.position.distance_to(order.store_position) +
                           order.store_position.distance_to(order.customer_position) +
                           order.customer_position.distance_to(drone.depot.get_center()))
         
-        # Check battery life (simplified calculation)
         max_distance = drone.battery_level * drone.speed * config.DRONE_BATTERY_LIFE
         
         return total_distance <= max_distance
     
     @staticmethod
     def validate_order_constraints(order: Order) -> bool:
-        """Validate basic order constraints"""
-        # Check if customer and store are different
         if order.customer_id == order.store_id:
             return False
         
-        # Check if positions are valid
         if (order.customer_position.x < 0 or order.customer_position.x > config.MAP_WIDTH or
             order.customer_position.y < 0 or order.customer_position.y > config.MAP_HEIGHT or
             order.store_position.x < 0 or order.store_position.x > config.MAP_WIDTH or

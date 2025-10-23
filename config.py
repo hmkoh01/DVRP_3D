@@ -11,7 +11,7 @@ MAP_DEPTH = 1000  # Z-axis (depth, same as MAP_HEIGHT)
 MAX_MAP_HEIGHT = 150  # Y-axis (maximum altitude for drones)
 
 # Building configuration
-TOTAL_BUILDINGS = 50
+TOTAL_BUILDINGS = 10
 BUILDING_MIN_SIZE = 20  # Minimum width/depth
 BUILDING_MAX_SIZE = 80  # Maximum width/depth
 BUILDING_MIN_HEIGHT = 10  # Minimum building height (Y-axis)

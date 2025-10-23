@@ -131,7 +131,7 @@ class UrsinaVisualizer:
             # Create depot entity (cylinder for visual distinction)
             # Depot position is at ground level (y should be small, around 1)
             depot_entity = Entity(
-                model='cylinder',
+                model=Cylinder(),
                 position=(depot.position.x, depot.position.y, depot.position.z),
                 scale=(10, 2, 10),
                 color=color.blue,
