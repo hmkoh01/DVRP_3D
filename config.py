@@ -1,13 +1,22 @@
-# Configuration file for DVRP simulation
+# Configuration file for DVRP simulation (3D)
 
 # Map configuration
 MAP_SEED = 123
 ORDER_SEED = 456
-MAP_WIDTH = 1000
-MAP_HEIGHT = 1000
+
+# 3D Map dimensions
+MAP_WIDTH = 1000  # X-axis (horizontal)
+MAP_HEIGHT = 1000  # Z-axis (horizontal, called HEIGHT for backward compatibility)
+MAP_DEPTH = 1000  # Z-axis (depth, same as MAP_HEIGHT)
+MAX_MAP_HEIGHT = 150  # Y-axis (maximum altitude for drones)
+
+# Building configuration
 TOTAL_BUILDINGS = 50
-BUILDING_MIN_SIZE = 20
-BUILDING_MAX_SIZE = 80
+BUILDING_MIN_SIZE = 20  # Minimum width/depth
+BUILDING_MAX_SIZE = 80  # Maximum width/depth
+BUILDING_MIN_HEIGHT = 10  # Minimum building height (Y-axis)
+BUILDING_MAX_HEIGHT = 100  # Maximum building height (Y-axis)
+FLOOR_HEIGHT = 10.0  # Height of each floor in meters
 
 # Depot configuration
 TOTAL_DEPOTS = 3

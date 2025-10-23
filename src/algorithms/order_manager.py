@@ -1,14 +1,14 @@
 """
-Order management system for dynamic order generation and depot assignment
+Order management system for dynamic order generation and depot assignment (3D)
 """
 
 import random
 import time
 import math
 from typing import List, Dict, Optional, Tuple
-from ..models.entities import Order, Building, Depot, Drone, OrderStatus, Position, EntityType
+from ..models.entities import Order, Depot, Drone, OrderStatus, Position, Store, Customer
 from .clustering import MixedClustering
-from .routing import DroneRouteOptimizer, SimpleRouting, AStarRouting
+from .routing import DroneRouteOptimizer, SimpleRouting, MultiLevelAStarRouting
 import config
 
 
@@ -38,25 +38,29 @@ class OrderGenerator:
         return None
     
     def _create_random_order(self, current_time: float) -> Order:
-        """Create a random order between a customer and a store"""
-        # Get available customers and stores
-        customers = [b for b in self.map.customers if b.entity_type == EntityType.CUSTOMER]
-        stores = [b for b in self.map.stores if b.entity_type == EntityType.STORE]
+        """Create a random order between a customer and a store (3D)
+        
+        Note: self.map.customers and self.map.stores now contain Store and Customer
+        entities (not Buildings), each representing a floor in a building.
+        """
+        # Get available customers and stores (already Store/Customer objects)
+        customers = self.map.customers  # List[Customer]
+        stores = self.map.stores  # List[Store]
         
         if not customers or not stores:
             return None
         
-        # Randomly select customer and store
-        customer_building = random.choice(customers)
-        store_building = random.choice(stores)
+        # Randomly select customer and store (these are floor-level entities)
+        customer_entity = random.choice(customers)
+        store_entity = random.choice(stores)
         
-        # Create order
+        # Create order with 3D positions
         order = Order(
             id=self.order_counter,
-            customer_id=customer_building.id,
-            store_id=store_building.id,
-            customer_position=customer_building.get_center(),
-            store_position=store_building.get_center(),
+            customer_id=customer_entity.id,
+            store_id=store_entity.id,
+            customer_position=customer_entity.get_center(),  # 3D position at floor level
+            store_position=store_entity.get_center(),  # 3D position at floor level
             created_time=current_time
         )
         
@@ -100,25 +104,25 @@ class DepotSelector:
         return None
     
     def _calculate_depot_score(self, depot: Depot, order: Order) -> float:
-        """Calculate a score for depot-order assignment"""
+        """Calculate a score for depot-order assignment using 3D distances"""
         # Check if depot has available drones
         available_drones = depot.get_available_drones()
         if not available_drones:
             return 0.0  # No available drones
         
-        # Distance from depot to store
+        # Distance from depot to store (3D Euclidean distance)
         depot_to_store_distance = depot.get_center().distance_to(order.store_position)
         
-        # Distance from store to customer
+        # Distance from store to customer (3D Euclidean distance)
         store_to_customer_distance = order.get_distance()
         
         # Total distance
         total_distance = depot_to_store_distance + store_to_customer_distance
         
-        # Distance from depot back to depot (return trip)
+        # Distance from customer back to depot (return trip, 3D)
         customer_to_depot_distance = order.customer_position.distance_to(depot.get_center())
         
-        # Complete trip distance
+        # Complete trip distance (3D)
         complete_trip_distance = total_distance + customer_to_depot_distance
         
         # Calculate score (lower distance = higher score)
@@ -172,7 +176,7 @@ class DepotSelector:
 
 
 class OrderManager:
-    """Manages the complete order lifecycle"""
+    """Manages the complete order lifecycle (3D)"""
     
     def __init__(self, map_obj, seed: Optional[int] = None):
         self.map = map_obj
@@ -180,8 +184,10 @@ class OrderManager:
         self.completed_orders: List[Order] = []
         self.order_generator = OrderGenerator(map_obj, seed=seed)
         self.depot_selector = DepotSelector(map_obj)
-        # self.route_optimizer = DroneRouteOptimizer(SimpleRouting())
-        self.route_optimizer = DroneRouteOptimizer(AStarRouting(map_obj))
+        
+        # Use 3D multi-level A* routing for obstacle avoidance
+        print("  Initializing 3D routing...")
+        self.route_optimizer = DroneRouteOptimizer(MultiLevelAStarRouting(map_obj, k_levels=10))
     
     def process_orders(self, current_time: float) -> List[Order]:
         """Process pending orders and generate new ones"""

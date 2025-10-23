@@ -1,11 +1,11 @@
 """
-Clustering algorithms for grouping stores and customers
+Clustering algorithms for grouping stores and customers (3D environment)
 """
 
 import numpy as np
 from sklearn.cluster import KMeans, DBSCAN
-from typing import List, Tuple, Dict
-from ..models.entities import Building, Position, EntityType, Map
+from typing import List, Tuple, Dict, Union
+from ..models.entities import Building, Position, EntityType, Map, Store, Customer
 import config
 
 
@@ -118,65 +118,121 @@ class DBSCANClustering(ClusteringAlgorithm):
 
 
 class MixedClustering:
-    """Clustering that considers both stores and customers"""
+    """Clustering that considers both stores and customers in 3D environment
     
-    def __init__(self, clustering_algorithm: str = config.CLUSTERING_ALGORITHM):
-        if clustering_algorithm == "kmeans":
-            self.algorithm = KMeansClustering()
-        elif clustering_algorithm == "dbscan":
-            self.algorithm = DBSCANClustering()
-        else:
-            self.algorithm = KMeansClustering()  # Default
+    Uses 2D projection (x, z) with floor-based density weighting.
+    Buildings with more floors will have more weight in clustering.
+    """
     
-    def cluster_stores_and_customers(self, map_obj: Map) -> Dict[int, Dict[str, List[Building]]]:
-        """Cluster both stores and customers together"""
-        # Get all buildings with entities
-        all_buildings = [building for building in map_obj.buildings if building.entity_type]
+    def __init__(self, n_clusters: int = config.TOTAL_DEPOTS):
+        self.n_clusters = n_clusters
+        self.kmeans = KMeans(n_clusters=n_clusters, random_state=42)
+        self.cluster_centers_ = None
+    
+    def cluster_stores_and_customers(self, map_obj: Map) -> Dict[int, Dict[str, List[Union[Store, Customer]]]]:
+        """Cluster both stores and customers together based on 2D projection with density
         
-        # Perform clustering
-        clusters = self.algorithm.cluster_entities(all_buildings)
+        Creates a flat list of 2D coordinates (x, z) from all Store and Customer entities.
+        Does NOT remove duplicates - if a building has 10 floors, (x, z) appears 10 times.
+        This naturally weights K-means toward high-density (multi-floor) areas.
         
-        # Separate stores and customers within each cluster
-        separated_clusters = {}
-        for cluster_id, buildings in clusters.items():
-            stores = [b for b in buildings if b.entity_type == EntityType.STORE]
-            customers = [b for b in buildings if b.entity_type == EntityType.CUSTOMER]
+        Args:
+            map_obj: Map containing Store and Customer entities
             
-            separated_clusters[cluster_id] = {
-                'stores': stores,
-                'customers': customers
-            }
+        Returns:
+            Dictionary mapping cluster_id to {'stores': [...], 'customers': [...]}
+        """
+        # 1. Create flat 2D projection list with ALL entities (including floor duplicates)
+        all_2d_coords = []
+        all_stores = []
+        all_customers = []
         
-        return separated_clusters
+        # Add all stores (one entry per floor)
+        for store in map_obj.stores:
+            pos = store.get_center()
+            all_2d_coords.append([pos.x, pos.z])  # Use (x, z) for horizontal plane
+            all_stores.append(store)
+        
+        # Add all customers (one entry per floor)
+        for customer in map_obj.customers:
+            pos = customer.get_center()
+            all_2d_coords.append([pos.x, pos.z])  # Use (x, z) for horizontal plane
+            all_customers.append(customer)
+        
+        all_entities = all_stores + all_customers
+        
+        print(f"  Clustering {len(all_stores)} stores + {len(all_customers)} customers")
+        print(f"  Total 2D points (with floor duplicates): {len(all_2d_coords)}")
+        
+        if len(all_2d_coords) < self.n_clusters:
+            print(f"  Warning: Not enough entities for {self.n_clusters} clusters")
+            # Create simple clusters
+            clusters = {}
+            for i, entity in enumerate(all_entities):
+                cluster_id = i % self.n_clusters
+                if cluster_id not in clusters:
+                    clusters[cluster_id] = {'stores': [], 'customers': []}
+                
+                if isinstance(entity, Store):
+                    clusters[cluster_id]['stores'].append(entity)
+                else:
+                    clusters[cluster_id]['customers'].append(entity)
+            
+            return clusters
+        
+        # 2. Run K-means on the complete 2D coordinate list (with all duplicates)
+        coords_array = np.array(all_2d_coords)
+        cluster_labels = self.kmeans.fit_predict(coords_array)
+        self.cluster_centers_ = self.kmeans.cluster_centers_  # Save for get_optimal_depot_positions
+        
+        print(f"  K-means completed. Cluster centers:")
+        for i, center in enumerate(self.cluster_centers_):
+            print(f"    Cluster {i}: ({center[0]:.1f}, {center[1]:.1f})")
+        
+        # 3. Group entities by cluster
+        clusters = {}
+        for i, entity in enumerate(all_entities):
+            cluster_id = int(cluster_labels[i])
+            
+            if cluster_id not in clusters:
+                clusters[cluster_id] = {'stores': [], 'customers': []}
+            
+            if isinstance(entity, Store):
+                clusters[cluster_id]['stores'].append(entity)
+            else:
+                clusters[cluster_id]['customers'].append(entity)
+        
+        return clusters
     
-    def calculate_cluster_metrics(self, clusters: Dict[int, Dict[str, List[Building]]]) -> Dict[int, Dict]:
-        """Calculate metrics for each cluster"""
+    def calculate_cluster_metrics(self, clusters: Dict[int, Dict[str, List[Union[Store, Customer]]]]) -> Dict[int, Dict]:
+        """Calculate metrics for each cluster (3D entities)"""
         metrics = {}
         
         for cluster_id, cluster_data in clusters.items():
             stores = cluster_data['stores']
             customers = cluster_data['customers']
             
-            # Calculate cluster center
-            all_buildings = stores + customers
-            if all_buildings:
-                center_x = sum(b.get_center().x for b in all_buildings) / len(all_buildings)
-                center_y = sum(b.get_center().y for b in all_buildings) / len(all_buildings)
-                center = Position(center_x, center_y)
+            # Calculate cluster center in 3D
+            all_entities = stores + customers
+            if all_entities:
+                center_x = sum(e.get_center().x for e in all_entities) / len(all_entities)
+                center_y = sum(e.get_center().y for e in all_entities) / len(all_entities)
+                center_z = sum(e.get_center().z for e in all_entities) / len(all_entities)
+                center = Position(center_x, center_y, center_z)
             else:
                 center = None
             
-            # Calculate demand (number of customers)
+            # Calculate demand (number of customer entities = total floors with customers)
             demand = len(customers)
             
-            # Calculate supply (number of stores)
+            # Calculate supply (number of store entities = total floors with stores)
             supply = len(stores)
             
-            # Calculate average distance from center
+            # Calculate average 3D distance from center
             avg_distance = 0
-            if center and all_buildings:
-                total_distance = sum(b.get_center().distance_to(center) for b in all_buildings)
-                avg_distance = total_distance / len(all_buildings)
+            if center and all_entities:
+                total_distance = sum(e.get_center().distance_to(center) for e in all_entities)
+                avg_distance = total_distance / len(all_entities)
             
             # Calculate store-customer ratio
             store_customer_ratio = supply / max(demand, 1)
@@ -187,61 +243,45 @@ class MixedClustering:
                 'supply': supply,
                 'avg_distance': avg_distance,
                 'store_customer_ratio': store_customer_ratio,
-                'total_buildings': len(all_buildings)
+                'total_entities': len(all_entities)
             }
         
         return metrics
     
-    def get_optimal_depot_positions(self, clusters: Dict[int, Dict[str, List[Building]]], 
+    def get_optimal_depot_positions(self, clusters: Dict[int, Dict[str, List[Union[Store, Customer]]]], 
                                   map_obj: Map) -> List[Position]:
-        """Get optimal depot positions based on cluster centers and metrics"""
-        metrics = self.calculate_cluster_metrics(clusters)
+        """Get optimal depot positions from K-means cluster centers
+        
+        Returns the 2D cluster centers computed by K-means as ground-level positions.
+        These positions are naturally weighted by floor density.
+        
+        Args:
+            clusters: Cluster dictionary (not directly used, but kept for compatibility)
+            map_obj: Map object (not directly used, but kept for compatibility)
+            
+        Returns:
+            List of 2D Position objects (x, 0, z) representing depot locations
+        """
         depot_positions = []
         
-        # Sort clusters by demand (number of customers)
-        sorted_clusters = sorted(metrics.items(), 
-                               key=lambda x: x[1]['demand'], reverse=True)
+        if self.cluster_centers_ is None:
+            print("  Warning: No cluster centers available")
+            return depot_positions
         
-        for cluster_id, cluster_metrics in sorted_clusters[:config.TOTAL_DEPOTS]:
-            center = cluster_metrics['center']
-            if center:
-                # Try to place depot at cluster center
-                depot_pos = self._find_valid_depot_position(center, map_obj)
-                if depot_pos:
-                    depot_positions.append(depot_pos)
+        # Convert K-means cluster centers to Position objects (ground level)
+        print(f"  Converting {len(self.cluster_centers_)} cluster centers to depot positions...")
+        for i, center in enumerate(self.cluster_centers_):
+            # center is [x, z] from K-means
+            # Create ground-level position (y=0)
+            depot_pos = Position(
+                x=float(center[0]),
+                y=0,  # Ground level
+                z=float(center[1])
+            )
+            depot_positions.append(depot_pos)
+            print(f"    - Depot position {i}: ({depot_pos.x:.1f}, 0, {depot_pos.z:.1f})")
         
         return depot_positions
-    
-    def _find_valid_depot_position(self, preferred_pos: Position, map_obj: Map) -> Position:
-        """Find a valid position for depot near preferred position"""
-        import math
-        
-        depot_size = config.DEPOT_SIZE
-        
-        # Try the preferred position first
-        if map_obj.is_position_valid(preferred_pos, depot_size):
-            return preferred_pos
-        
-        # Try positions in expanding circles around preferred position
-        max_radius = min(map_obj.width, map_obj.height) / 4
-        radius_step = depot_size
-        
-        for radius in range(int(radius_step), int(max_radius), int(radius_step)):
-            # Try positions at different angles
-            for angle in range(0, 360, 30):  # Every 30 degrees
-                angle_rad = math.radians(angle)
-                offset_x = radius * math.cos(angle_rad)
-                offset_y = radius * math.sin(angle_rad)
-                
-                test_pos = Position(
-                    preferred_pos.x + offset_x,
-                    preferred_pos.y + offset_y
-                )
-                
-                if map_obj.is_position_valid(test_pos, depot_size):
-                    return test_pos
-        
-        return None
 
 
 class ClusterAnalyzer:
@@ -288,30 +328,52 @@ class ClusterAnalyzer:
         return total_score / max(total_points, 1)
     
     @staticmethod
-    def print_cluster_summary(clusters: Dict[int, Dict[str, List[Building]]]):
-        """Print a summary of cluster analysis"""
+    def print_cluster_summary(clusters: Dict[int, Dict[str, List[Union[Store, Customer]]]]):
+        """Print a summary of cluster analysis (3D entities)"""
         print("\n=== Cluster Analysis Summary ===")
+        
+        total_stores = 0
+        total_customers = 0
         
         for cluster_id, cluster_data in clusters.items():
             stores = cluster_data['stores']
             customers = cluster_data['customers']
             
+            total_stores += len(stores)
+            total_customers += len(customers)
+            
             print(f"Cluster {cluster_id}:")
-            print(f"  - Stores: {len(stores)}")
-            print(f"  - Customers: {len(customers)}")
-            print(f"  - Total buildings: {len(stores) + len(customers)}")
+            print(f"  - Store entities: {len(stores)} (floors)")
+            print(f"  - Customer entities: {len(customers)} (floors)")
+            print(f"  - Total entities: {len(stores) + len(customers)}")
+            
+            # Calculate unique buildings per cluster
+            if stores:
+                unique_store_buildings = len(set(s.building_id for s in stores))
+                print(f"  - Unique store buildings: {unique_store_buildings}")
+            
+            if customers:
+                unique_customer_buildings = len(set(c.building_id for c in customers))
+                print(f"  - Unique customer buildings: {unique_customer_buildings}")
             
             if stores and customers:
-                # Calculate average distance between stores and customers in cluster
+                # Calculate average 3D distance between stores and customers in cluster
                 total_distance = 0
                 count = 0
-                for store in stores:
-                    for customer in customers:
+                # Sample to avoid O(n^2) for large clusters
+                sample_size = min(10, len(stores), len(customers))
+                import random
+                sample_stores = random.sample(stores, sample_size) if len(stores) > sample_size else stores
+                sample_customers = random.sample(customers, sample_size) if len(customers) > sample_size else customers
+                
+                for store in sample_stores:
+                    for customer in sample_customers:
                         total_distance += store.get_center().distance_to(customer.get_center())
                         count += 1
                 
                 if count > 0:
                     avg_distance = total_distance / count
-                    print(f"  - Average store-customer distance: {avg_distance:.2f}")
+                    print(f"  - Avg store-customer 3D distance (sampled): {avg_distance:.2f}m")
         
-        print("=" * 35)
+        print(f"\nTotal: {total_stores} store entities + {total_customers} customer entities")
+        print("=" * 50)

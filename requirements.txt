@@ -2,4 +2,5 @@ numpy>=1.21.0
 matplotlib>=3.5.0
 scipy>=1.7.0
 scikit-learn>=1.0.0
-pygame>=2.1.0
+ursina==5.2.0
+networkx>=2.6.0
