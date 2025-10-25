@@ -157,14 +157,17 @@ class OrderManager:
         self.order_generator = OrderGenerator(map_obj, seed=seed)
         self.depot_selector = DepotSelector(map_obj)
         
-        print("  Initializing 3D routing...")
+        print("  Initializing 3D routing...")
         self.route_optimizer = DroneRouteOptimizer(MultiLevelAStarRouting(map_obj, k_levels=3))
+        
+        # 시각화 설정
+        self.first_route_visualized = False
     
     def process_orders(self, current_time: float) -> List[Order]:
         new_order = self.order_generator.generate_random_order(current_time)
         if new_order:
             self.orders.append(new_order)
-            print(f"New order generated: Customer {new_order.customer_id} -> Store {new_order.store_id}")
+            print(f"📝 New order #{new_order.id}: Customer {new_order.customer_id} -> Store {new_order.store_id}")
         
         new_completed = []
         for order in self.orders[:]:
@@ -191,21 +194,32 @@ class OrderManager:
                 order.status = OrderStatus.ASSIGNED
                 
                 try:
-                    route = self.route_optimizer.optimize_delivery_route(assigned_drone, order)
+                    # 시각화 옵션 결정
+                    should_visualize = False
+                    if config.VISUALIZE_ALL_ROUTES:
+                        should_visualize = True
+                    elif config.VISUALIZE_FIRST_ROUTE and not self.first_route_visualized:
+                        should_visualize = True
+                        self.first_route_visualized = True
+                        print(f"\n{'='*60}\n📊 Visualizing first delivery route\n{'='*60}")
+                    
+                    route = self.route_optimizer.optimize_delivery_route(assigned_drone, order, visualize=should_visualize)
                     
                     # (수정) 경로 탐색 실패 시 할당 해제
                     if not route or len(route) < 2:
-                        print(f"Order {order.id} route calculation FAILED. Releasing drone and order.")
+                        print(f"❌ Order {order.id}: Route calculation FAILED")
                         order.status = OrderStatus.PENDING
                         order.assigned_drone = None
                         assigned_drone.current_order = None
                         assigned_drone.status = DroneStatus.IDLE
                     else:
                         assigned_drone.start_delivery(route)
-                        print(f"Order {order.id} assigned to depot {best_depot.id}, drone {assigned_drone.id} with route")
+                        print(f"✓ Order {order.id} assigned to Depot {best_depot.id}, Drone {assigned_drone.id}")
                 
                 except Exception as e:
                     print(f"Failed to set route for order {order.id}: {e}")
+                    import traceback
+                    traceback.print_exc()
                     # (수정) 예외 발생 시에도 할당 해제
                     order.status = OrderStatus.PENDING
                     order.assigned_drone = None

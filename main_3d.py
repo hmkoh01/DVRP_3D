@@ -130,6 +130,39 @@ class DVRP3DApplication:
             background=True
         )
         
+        # Legend (bottom-left) - Single box with colored items
+        # Create background panel first
+        self.legend_bg = Text(
+            text='                              \n\n\n\n\n',  # Empty text for background
+            position=window.bottom_left + Vec2(0.01, 0.01),
+            origin=(-0.5, -0.5),
+            scale=1,
+            color=color.clear,
+            background=True
+        )
+        
+        # Create individual colored text items on top of background
+        legend_items = [
+            ('Store Buildings', color.green),
+            ('Customer Buildings', color.red),
+            ('Empty Buildings', color.white),
+            ('Depots', color.blue),
+            ('Drones', color.yellow),
+        ]
+        
+        self.legend_items = []
+        base_y = 0.11
+        for i, (label, item_color) in enumerate(legend_items):
+            legend_item = Text(
+                text=label,
+                position=window.bottom_left + Vec2(0.015, base_y - i*0.025),
+                origin=(-0.5, -0.5),
+                scale=0.9,
+                color=item_color,
+                background=False
+            )
+            self.legend_items.append(legend_item)
+        
         # Help text (top-right)
         help_content = """Controls:
 SPACE: Start/Pause
@@ -311,8 +344,8 @@ def main():
     """Main function"""
     global app_instance
     
-    MAP_SEED: Optional[int] = None  # Set to a number for reproducible maps
-    ORDER_SEED: Optional[int] = None  # Set to a number for reproducible orders
+    MAP_SEED: Optional[int] = config.MAP_SEED
+    ORDER_SEED: Optional[int] = config.ORDER_SEED
     
     app_instance = DVRP3DApplication(map_seed=MAP_SEED, order_seed=ORDER_SEED)
     

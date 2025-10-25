@@ -240,6 +240,7 @@ class SimulationEngine:
             for drone in depot.drones:
                 if drone.status != DroneStatus.IDLE:
                     active_drones.append(drone)
+        
         return active_drones
     
     # Event system

@@ -32,7 +32,7 @@ class MapGenerator:
 
     
     def generate_buildings(self, num_buildings: int = config.TOTAL_BUILDINGS) -> List[Building]:
-        """Generate random 3D buildings in the map"""
+        """Generate random 3D buildings in the map with safety margins"""
         buildings = []
         
         for i in range(num_buildings):
@@ -43,9 +43,13 @@ class MapGenerator:
             # height: vertical dimension (y-axis), buildings can be taller
             height = random.uniform(config.BUILDING_MIN_HEIGHT, config.BUILDING_MAX_HEIGHT)
             
-            # Try to find a valid position on the ground
+            # Try to find a valid position on the ground with safety margin from other buildings
             # get_random_valid_position returns Position(x, height/2, z) - centered vertically
-            position = self.map.get_random_valid_position(width, height, depth)
+            position = self.map.get_random_valid_position(
+                width, height, depth, 
+                max_attempts=100, 
+                safety_margin=config.BUILDING_SAFETY_MARGIN
+            )
             
             if position:
                 building = Building(
@@ -61,12 +65,14 @@ class MapGenerator:
         return buildings
     
     def assign_entities_to_buildings(self, buildings: List[Building], 
-                                   store_ratio: float = 0.3) -> Tuple[List[Store], List[Customer]]:
+                                   store_ratio: float = config.STORE_RATIO,
+                                   customer_ratio: float = config.CUSTOMER_RATIO) -> Tuple[List[Store], List[Customer]]:
         """Assign stores and customers to buildings and create floor-by-floor entities
         
         For each building designated as store/customer building:
         - Creates Store/Customer objects for each floor
         - One building can only be either all stores OR all customers (not mixed)
+        - Remaining buildings will be empty (entity_type = None)
         
         Returns:
             Tuple of (list of Store objects, list of Customer objects)
@@ -76,7 +82,10 @@ class MapGenerator:
         random.shuffle(available_buildings)
         
         num_store_buildings = int(len(buildings) * store_ratio)
-        num_customer_buildings = len(buildings) - num_store_buildings
+        num_customer_buildings = int(len(buildings) * customer_ratio)
+        num_empty_buildings = len(buildings) - num_store_buildings - num_customer_buildings
+        
+        print(f"  Building distribution: {num_store_buildings} stores, {num_customer_buildings} customers, {num_empty_buildings} empty")
         
         all_stores = []
         all_customers = []
@@ -138,16 +147,22 @@ class MapGenerator:
         
         print(f"    - Created {len(all_customers)} customer entities across floors")
         
+        # Remaining buildings stay as empty buildings (entity_type = None)
+        if available_buildings:
+            print(f"  {len(available_buildings)} buildings remain empty (no entity type assigned)")
+        
         return all_stores, all_customers
     
     def generate_map(self, num_buildings: int = config.TOTAL_BUILDINGS, 
-                     store_ratio: float = 0.3) -> Map:
+                     store_ratio: float = config.STORE_RATIO,
+                     customer_ratio: float = config.CUSTOMER_RATIO) -> Map:
         """Generate a complete 3D map with buildings, stores, and customers
         
         Creates:
         - 3D building structures
         - Store entities on each floor of store buildings
         - Customer entities on each floor of customer buildings
+        - Empty buildings (no entity type)
         """
         if self.seed is not None:
             print(f"Generating map with fixed seed: {self.seed}")
@@ -158,7 +173,7 @@ class MapGenerator:
         print(f"Generated {len(buildings)} 3D buildings")
         
         print("Assigning stores and customers to building floors...")
-        stores, customers = self.assign_entities_to_buildings(buildings, store_ratio)
+        stores, customers = self.assign_entities_to_buildings(buildings, store_ratio, customer_ratio)
         print(f"Total entities: {len(stores)} stores + {len(customers)} customers")
         
         return self.map
@@ -230,10 +245,10 @@ class DepotPlacer:
             # IMPORTANT: Depot is always at ground level (y = height/2 for centered position)
             cell_center_y = depot_height / 2  # Centered at ground level
             
-            # Find a valid position that doesn't overlap with building footprints
+            # Find a valid position that doesn't overlap with building footprints or existing depots
             depot_pos = self._find_valid_ground_depot_position(
                 Position(cell_center_x, cell_center_y, cell_center_z), 
-                depot_width, depot_depth
+                depot_width, depot_depth, depot_positions
             )
             
             if depot_pos:
@@ -242,23 +257,25 @@ class DepotPlacer:
         
         # If we need more depots, place them randomly (still at ground level)
         while len(depot_positions) < num_depots:
-            depot_pos = self._find_random_ground_depot_position(depot_width, depot_depth)
-            if depot_pos and depot_pos not in depot_positions:
+            depot_pos = self._find_random_ground_depot_position(depot_width, depot_depth, depot_positions)
+            if depot_pos:
                 depot_positions.append(depot_pos)
                 print(f"    - Depot {len(depot_positions)-1} placed at ({depot_pos.x:.1f}, 0, {depot_pos.z:.1f})")
         
         return depot_positions
     
-    def _check_ground_footprint_overlap(self, pos: Position, width: float, depth: float) -> bool:
+    def _check_ground_footprint_overlap(self, pos: Position, width: float, depth: float, 
+                                        safety_margin: float = config.DEPOT_SAFETY_MARGIN) -> bool:
         """Check if a ground-level footprint overlaps with any building footprint
         
         Args:
             pos: Center position on ground (x, y, z)
             width: Width along x-axis
             depth: Depth along z-axis
+            safety_margin: Safety distance to maintain from buildings (default from config)
             
         Returns:
-            True if overlaps with any building, False otherwise
+            True if overlaps with any building (including safety margin), False otherwise
         """
         half_width = width / 2
         half_depth = depth / 2
@@ -268,31 +285,68 @@ class DepotPlacer:
             building_half_width = building.width / 2
             building_half_depth = building.depth / 2
             
-            # Check if rectangles overlap in 2D
-            x_overlap = abs(pos.x - building.position.x) < (half_width + building_half_width)
-            z_overlap = abs(pos.z - building.position.z) < (half_depth + building_half_depth)
+            # Check if rectangles overlap in 2D (including safety margin)
+            x_overlap = abs(pos.x - building.position.x) < (half_width + building_half_width + safety_margin)
+            z_overlap = abs(pos.z - building.position.z) < (half_depth + building_half_depth + safety_margin)
             
             if x_overlap and z_overlap:
-                return True  # Overlaps with this building
+                return True  # Overlaps with this building (or too close)
         
         return False  # No overlap
     
-    def _find_valid_ground_depot_position(self, preferred_pos: Position, width: float, depth: float) -> Position:
+    def _check_depot_overlap(self, pos: Position, width: float, depth: float, 
+                             existing_depots: List[Position]) -> bool:
+        """Check if depot overlaps with existing depots
+        
+        Args:
+            pos: Position to check
+            width: Depot width
+            depth: Depot depth
+            existing_depots: List of existing depot positions
+            
+        Returns:
+            True if overlaps with any existing depot, False otherwise
+        """
+        if not existing_depots:
+            return False
+        
+        half_width = width / 2
+        half_depth = depth / 2
+        safety_margin = config.DEPOT_SAFETY_MARGIN
+        
+        for depot_pos in existing_depots:
+            # Check 2D distance on x-z plane
+            x_dist = abs(pos.x - depot_pos.x)
+            z_dist = abs(pos.z - depot_pos.z)
+            
+            # Check if too close (including safety margin)
+            if x_dist < (width + safety_margin) and z_dist < (depth + safety_margin):
+                return True
+        
+        return False
+    
+    def _find_valid_ground_depot_position(self, preferred_pos: Position, width: float, depth: float,
+                                         existing_depots: List[Position] = None) -> Position:
         """Find a valid ground-level position for depot near preferred position
         
-        Ensures depot footprint doesn't overlap with building footprints.
+        Ensures depot footprint doesn't overlap with building footprints or existing depots.
         
         Args:
             preferred_pos: Preferred position to place depot
             width: Depot width (x-axis)
             depth: Depot depth (z-axis)
+            existing_depots: List of existing depot positions to avoid
         """
+        if existing_depots is None:
+            existing_depots = []
+        
         depot_height = 2  # Fixed height for depot
         half_width = width / 2
         half_depth = depth / 2
         
         # Try the preferred position first
-        if not self._check_ground_footprint_overlap(preferred_pos, width, depth):
+        if (not self._check_ground_footprint_overlap(preferred_pos, width, depth) and
+            not self._check_depot_overlap(preferred_pos, width, depth, existing_depots)):
             # Check map bounds
             if (preferred_pos.x - half_width >= 0 and preferred_pos.x + half_width <= self.map.width and
                 preferred_pos.z - half_depth >= 0 and preferred_pos.z + half_depth <= self.map.depth):
@@ -319,20 +373,27 @@ class DepotPlacer:
                 if (test_pos.x - half_width >= 0 and test_pos.x + half_width <= self.map.width and
                     test_pos.z - half_depth >= 0 and test_pos.z + half_depth <= self.map.depth):
                     
-                    # Check if footprint overlaps with buildings
-                    if not self._check_ground_footprint_overlap(test_pos, width, depth):
+                    # Check if footprint overlaps with buildings or existing depots
+                    if (not self._check_ground_footprint_overlap(test_pos, width, depth) and
+                        not self._check_depot_overlap(test_pos, width, depth, existing_depots)):
                         return test_pos
         
         return None
     
-    def _find_random_ground_depot_position(self, width: float, depth: float, max_attempts: int = 100) -> Optional[Position]:
+    def _find_random_ground_depot_position(self, width: float, depth: float, 
+                                           existing_depots: List[Position] = None,
+                                           max_attempts: int = 200) -> Optional[Position]:
         """Find a random valid ground-level position for depot
         
         Args:
             width: Depot width (x-axis)
             depth: Depot depth (z-axis)
+            existing_depots: List of existing depot positions to avoid
             max_attempts: Maximum number of random attempts
         """
+        if existing_depots is None:
+            existing_depots = []
+        
         depot_height = 2
         half_width = width / 2
         half_depth = depth / 2
@@ -344,8 +405,9 @@ class DepotPlacer:
             
             test_pos = Position(x, depot_height / 2, z)
             
-            # Check if footprint overlaps with buildings
-            if not self._check_ground_footprint_overlap(test_pos, width, depth):
+            # Check if footprint overlaps with buildings or existing depots
+            if (not self._check_ground_footprint_overlap(test_pos, width, depth) and
+                not self._check_depot_overlap(test_pos, width, depth, existing_depots)):
                 return test_pos
         
         return None

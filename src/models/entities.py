@@ -58,6 +58,22 @@ class Position:
         else:
             raise IndexError(f"Position index out of range: {idx}")
 
+    def normalize(self) -> 'Position':
+        """벡터를 정규화하여 단위 벡터(길이 1)를 반환합니다."""
+        mag = math.sqrt(self.x**2 + self.y**2 + self.z**2)
+        if mag == 0:
+            return Position(0, 0, 0)
+        return Position(self.x / mag, self.y / mag, self.z / mag)
+
+    def __mul__(self, scalar: float) -> 'Position':
+        """벡터에 스칼라 값을 곱합니다."""
+        return Position(self.x * scalar, self.y * scalar, self.z * scalar)
+
+    # distance_to_2d 함수도 routing.py에서 사용하므로 추가합니다.
+    def distance_to_2d(self, other: 'Position') -> float:
+        """Calculate Euclidean distance in 2D (x, z plane)"""
+        return math.sqrt((self.x - other.x)**2 + (self.z - other.z)**2)
+
     def __hash__(self):
         return hash((self.x, self.y, self.z))
 
@@ -104,8 +120,16 @@ class Building:
         """Get the center position at ground level (y=0)"""
         return Position(self.position.x, 0, self.position.z)
     
-    def collides_with(self, other: 'Building') -> bool:
-        """Check if this building collides with another building in 3D space"""
+    def collides_with(self, other: 'Building', safety_margin: float = 0.0) -> bool:
+        """Check if this building collides with another building in 3D space
+        
+        Args:
+            other: Another building to check collision with
+            safety_margin: Additional safety distance to maintain between buildings
+        
+        Returns:
+            True if buildings overlap (including safety margin), False otherwise
+        """
         half_width_self = self.width / 2
         half_height_self = self.height / 2
         half_depth_self = self.depth / 2
@@ -114,10 +138,10 @@ class Building:
         half_height_other = other.height / 2
         half_depth_other = other.depth / 2
         
-        # Check overlap on all three axes
-        x_overlap = abs(self.position.x - other.position.x) < (half_width_self + half_width_other)
+        # Check overlap on all three axes (including safety margin)
+        x_overlap = abs(self.position.x - other.position.x) < (half_width_self + half_width_other + safety_margin)
         y_overlap = abs(self.position.y - other.position.y) < (half_height_self + half_height_other)
-        z_overlap = abs(self.position.z - other.position.z) < (half_depth_self + half_depth_other)
+        z_overlap = abs(self.position.z - other.position.z) < (half_depth_self + half_depth_other + safety_margin)
         
         return x_overlap and y_overlap and z_overlap
 
@@ -201,8 +225,14 @@ class Drone:
     
     def start_delivery(self, route: List[Position]):
         """Start delivery with given route"""
-        self.route = route
-        self.status = DroneStatus.FLYING
+        if route and len(route) > 1:
+            self.route = route
+            self.status = DroneStatus.FLYING
+            print(f"🚁 Drone {self.id}: Starting delivery with {len(route)} waypoints")
+        else:
+            print(f"❌ ERROR: Drone {self.id} received invalid route")
+            self.route = None
+            self.status = DroneStatus.IDLE
     
     def update_position(self, dt: float):
         """
@@ -212,7 +242,7 @@ class Drone:
         # 경로가 없거나 비어있으면 아무것도 하지 않습니다.
         if not self.route:
             return
-
+        
         target = self.route[0]
         direction = Position(
             target.x - self.position.x,
@@ -221,6 +251,30 @@ class Drone:
         )
         distance = self.position.distance_to(target)
 
+        # 이미 목표 지점에 있거나 매우 가까운 경우 즉시 다음 waypoint로
+        if distance < 0.1:
+            self.route.pop(0)
+            
+            # 상태 전환 (핵심 이벤트만 로그)
+            if self.status == DroneStatus.FLYING:
+                self.status = DroneStatus.DELIVERING
+                print(f"✈️  Drone {self.id}: Arrived at STORE")
+            elif self.status == DroneStatus.DELIVERING:
+                self.status = DroneStatus.RETURNING
+                print(f"📦 Drone {self.id}: Delivered to CUSTOMER")
+            
+            # 경로의 마지막 목적지에 도착했는지 확인
+            if not self.route:
+                if self.status == DroneStatus.RETURNING:
+                    # 배달 완료 처리
+                    if self.current_order:
+                        self.current_order.status = OrderStatus.COMPLETED
+                        print(f"✅ Drone {self.id}: Order {self.current_order.id} COMPLETED")
+                        self.current_order = None
+                    
+                    self.status = DroneStatus.IDLE
+            return
+        
         # 목표 지점에 도달할 만큼 가까워졌는지 확인합니다.
         # 수평/수직 속도를 고려한 효과적인 이동 속도 계산
         horizontal_distance = math.sqrt(direction.x**2 + direction.z**2)
@@ -240,14 +294,22 @@ class Drone:
                 if self.status == DroneStatus.FLYING:
                     # '가게'에 도착했으므로, 이제 '배달 중' 상태로 변경합니다.
                     self.status = DroneStatus.DELIVERING
+                    print(f"✈️  Drone {self.id}: Arrived at STORE")
                 
                 elif self.status == DroneStatus.DELIVERING:
                     # '고객'에게 도착했으므로, 이제 '복귀 중' 상태로 변경합니다.
                     self.status = DroneStatus.RETURNING
+                    print(f"📦 Drone {self.id}: Delivered to CUSTOMER")
 
                 # 경로의 마지막 목적지에 도착했는지 확인합니다.
                 if not self.route:
                     if self.status == DroneStatus.RETURNING:
+                        # 배달 완료 처리
+                        if self.current_order:
+                            self.current_order.status = OrderStatus.COMPLETED
+                            print(f"✅ Drone {self.id}: Order {self.current_order.id} COMPLETED")
+                            self.current_order = None
+                        
                         # 'Depot'에 도착했으므로, '대기' 상태로 전환되어 화면에서 사라집니다.
                         self.status = DroneStatus.IDLE
             else:
@@ -313,7 +375,27 @@ class Map:
     def add_depot(self, depot: Depot):
         """Add a depot to the map"""
         self.depots.append(depot)
-    
+
+    def get_building_containing_point(self, point: Position) -> Optional[Building]:
+        """주어진 3D 좌표(point)가 포함된 건물을 반환합니다. 없으면 None을 반환합니다."""
+        for building in self.buildings:
+            half_w = building.width / 2
+            half_d = building.depth / 2
+            
+            # 건물의 X, Z 경계 확인 (건물 중심 기준)
+            within_xz = (
+                (building.position.x - half_w <= point.x <= building.position.x + half_w) and
+                (building.position.z - half_d <= point.z <= building.position.z + half_d)
+            )
+            
+            # 건물의 Y(높이) 경계 확인 (바닥은 0)
+            within_y = (0 <= point.y <= building.height)
+            
+            if within_xz and within_y:
+                return building # 점이 건물 내부에 있음
+
+        return None # 어떤 건물에도 포함되지 않음
+
     def get_building_at_position(self, pos: Position) -> Optional[Building]:
         """Get building at a specific 3D position"""
         for building in self.buildings:
@@ -321,7 +403,8 @@ class Map:
                 return building
         return None
     
-    def is_position_valid(self, pos: Position, width: float = 0, height: float = 0, depth: float = 0) -> bool:
+    def is_position_valid(self, pos: Position, width: float = 0, height: float = 0, depth: float = 0,
+                          safety_margin: float = 0.0) -> bool:
         """Check if a 3D position is valid (not overlapping with buildings)
         
         Args:
@@ -329,6 +412,7 @@ class Map:
             width: Size along x-axis
             height: Size along y-axis (vertical)
             depth: Size along z-axis
+            safety_margin: Additional safety distance to maintain from other buildings
         """
         # Check bounds (assuming pos is center)
         half_width = width / 2
@@ -339,17 +423,17 @@ class Map:
             pos.y < 0 or pos.y > self.max_height):
             return False
         
-        # Check building collisions
+        # Check building collisions (with safety margin)
         if width > 0 and height > 0 and depth > 0:
             test_building = Building(0, pos, width, height, depth)
             for building in self.buildings:
-                if test_building.collides_with(building):
+                if test_building.collides_with(building, safety_margin):
                     return False
         
         return True
     
     def get_random_valid_position(self, width: float, height: float, depth: float, 
-                                  max_attempts: int = 100) -> Optional[Position]:
+                                  max_attempts: int = 100, safety_margin: float = 0.0) -> Optional[Position]:
         """Get a random valid 3D position for placing entities
         
         Args:
@@ -357,6 +441,7 @@ class Map:
             height: Size along y-axis (vertical)
             depth: Size along z-axis
             max_attempts: Maximum number of placement attempts
+            safety_margin: Additional safety distance to maintain from other buildings
         """
         for _ in range(max_attempts):
             # Random position on ground plane (y = height/2 to center the building)
@@ -366,7 +451,7 @@ class Map:
             
             pos = Position(x, y, z)
             
-            if self.is_position_valid(pos, width, height, depth):
+            if self.is_position_valid(pos, width, height, depth, safety_margin):
                 return pos
         
         return None

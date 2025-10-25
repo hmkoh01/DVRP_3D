@@ -97,7 +97,7 @@ class UrsinaVisualizer:
                 bldg_color = color.red
                 alpha = 0.8
             else:
-                bldg_color = color.dark_gray
+                bldg_color = color.white
                 alpha = 0.9
             
             # Create building entity
@@ -169,6 +169,10 @@ class UrsinaVisualizer:
         Args:
             drones: List of active drones to visualize
         """
+        if not drones:
+            # No active drones to display - don't clear immediately to avoid flickering
+            return
+        
         active_drone_ids = set()
         
         for drone in drones:
@@ -180,7 +184,9 @@ class UrsinaVisualizer:
                     model='sphere',
                     scale=5,
                     color=color.yellow,
-                    position=(drone.position.x, drone.position.y, drone.position.z)
+                    position=(drone.position.x, drone.position.y, drone.position.z),
+                    enabled=True,
+                    visible=True
                 )
                 self.drone_entities[drone.id] = drone_entity
                 
@@ -191,17 +197,17 @@ class UrsinaVisualizer:
                     scale=1.5,
                     color=color.black,
                     billboard=True,
-                    origin=(0, 0)
+                    origin=(0, 0),
+                    enabled=True
                 )
                 self.drone_labels[drone.id] = drone_label
             
             # Update position for existing drone
             else:
-                self.drone_entities[drone.id].position = (
-                    drone.position.x,
-                    drone.position.y,
-                    drone.position.z
-                )
+                new_pos = (drone.position.x, drone.position.y, drone.position.z)
+                self.drone_entities[drone.id].position = new_pos
+                self.drone_entities[drone.id].enabled = True
+                self.drone_entities[drone.id].visible = True
                 
                 # Update label position
                 if drone.id in self.drone_labels:
@@ -210,6 +216,7 @@ class UrsinaVisualizer:
                         drone.position.y + 5,
                         drone.position.z
                     )
+                    self.drone_labels[drone.id].enabled = True
         
         # Remove drones that are no longer active
         inactive_drone_ids = set(self.drone_entities.keys()) - active_drone_ids
