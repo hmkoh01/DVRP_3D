@@ -106,16 +106,59 @@ class DVRP3DApplication:
             return False
     
     def _setup_depots(self):
-        """Setup depots using clustering"""
+        """Setup depots using clustering with automatic k determination"""
+        # 1. Create MixedClustering object
         clustering = MixedClustering()
-        clusters = clustering.cluster_stores_and_customers(self.map)
-        ClusterAnalyzer.print_cluster_summary(clusters)
-        depot_positions = clustering.get_optimal_depot_positions(clusters, self.map)
         
+        # 2. Prepare 2D coordinates list (x, z) for all stores and customers
+        # Include duplicates to reflect floor density
+        projected_points = []
+        
+        for store in self.map.stores:
+            pos = store.get_center()
+            projected_points.append((pos.x, pos.z))
+        
+        for customer in self.map.customers:
+            pos = customer.get_center()
+            projected_points.append((pos.x, pos.z))
+        
+        print(f"  - Total data points for clustering: {len(projected_points)}")
+        
+        # 3. Find optimal k automatically using kneed
+        optimal_k = clustering.find_optimal_k_auto(projected_points, max_k=10)
+        
+        # 4. Get optimal depot positions using the determined k value
+        depot_candidate_positions = clustering.get_optimal_depot_positions(projected_points, optimal_k)
+        
+        # 5. Use DepotPlacer to validate and adjust positions
         depot_placer = DepotPlacer(self.map)
-        depots = depot_placer.create_depots_with_drones(depot_positions)
         
-        print(f"  - Depot 수: {len(depots)}")
+        # Validate positions and find nearest alternatives if needed
+        validated_positions = []
+        for i, candidate_pos in enumerate(depot_candidate_positions):
+            print(f"  Processing depot {i+1}/{len(depot_candidate_positions)}...")
+            
+            # DepotPlacer will automatically find nearest valid position
+            # if candidate_pos overlaps with buildings
+            valid_pos = depot_placer._find_valid_ground_depot_position(
+                preferred_pos=candidate_pos,
+                width=config.DEPOT_SIZE,
+                depth=config.DEPOT_SIZE,
+                existing_depots=validated_positions
+            )
+            
+            if valid_pos:
+                validated_positions.append(valid_pos)
+                if valid_pos.x == candidate_pos.x and valid_pos.z == candidate_pos.z:
+                    print(f"  ✓ Depot {i} placed at optimal position: ({valid_pos.x:.1f}, {valid_pos.z:.1f})")
+            else:
+                print(f"  ✗ Could not place depot {i} (no valid space found)")
+        
+        # 6. Create depots with drones at validated positions
+        depots = depot_placer.create_depots_with_drones(validated_positions)
+        
+        print(f"\n  - Automatically determined optimal k: {optimal_k}")
+        print(f"  - Successfully placed Depot 수: {len(depots)}")
         print(f"  - 총 드론 수: {sum(len(depot.drones) for depot in depots)}")
     
     def _setup_ui(self):

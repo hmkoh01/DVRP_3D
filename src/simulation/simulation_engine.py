@@ -130,6 +130,9 @@ class SimulationEngine:
                     self.stats['total_drone_distance'] += distance_moved
                 
                 self._update_drone(drone, delta_time)
+                
+                # Check for building collisions and update collision status
+                self._check_drone_collision(drone)
     
     def _update_drone(self, drone: Drone, delta_time: float):
         """Update individual drone position and state
@@ -144,11 +147,59 @@ class SimulationEngine:
             delta_time: Time elapsed since last update
         """
         if drone.status == DroneStatus.IDLE:
+            # Reset collision status when idle
+            drone.collision_status = 'none'
             return
 
         # Update drone's 3D position and state
         # The Drone.update_position() method in entities.py handles all 3D logic
         drone.update_position(delta_time)
+    
+    def _check_drone_collision(self, drone: Drone):
+        """Check if drone is colliding with a building and update collision status
+        
+        Args:
+            drone: Drone to check for collision
+        """
+        # Only check collision for active drones
+        if drone.status == DroneStatus.IDLE:
+            drone.collision_status = 'none'
+            return
+        
+        # Check if drone is inside any building
+        collided_building = self.map.get_building_containing_point(drone.position)
+        
+        if collided_building is not None:
+            # Drone is inside a building - determine if it's the destination or accidental
+            is_destination = False
+            
+            if drone.current_order is not None:
+                # Check if this building is the destination (store or customer)
+                if drone.current_order.store_building_id is not None and collided_building.id == drone.current_order.store_building_id:
+                    is_destination = True
+                elif drone.current_order.customer_building_id is not None and collided_building.id == drone.current_order.customer_building_id:
+                    is_destination = True
+                
+                # Also check if the target position is in this building (fallback method)
+                if not is_destination and drone.route and len(drone.route) > 0:
+                    target_pos = drone.route[0]
+                    distance_to_target = drone.position.distance_to(target_pos)
+                    
+                    # If very close to target and inside building containing target
+                    if distance_to_target < config.NODE_OFFSET * 2:
+                        target_building = self.map.get_building_containing_point(target_pos)
+                        if target_building is not None and target_building.id == collided_building.id:
+                            is_destination = True
+            
+            # Set collision status based on whether it's a destination
+            if is_destination:
+                drone.collision_status = 'destination_entry'
+            else:
+                drone.collision_status = 'accidental'
+        else:
+            # Drone is not inside any building
+            # If previously in destination_entry state, reset to none when exiting building
+            drone.collision_status = 'none'
     
     def _update_statistics(self, completed_orders: List[Order]):
         """Update simulation statistics"""

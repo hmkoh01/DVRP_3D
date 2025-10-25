@@ -4,3 +4,4 @@ scipy>=1.7.0
 scikit-learn>=1.0.0
 ursina==5.2.0
 networkx>=2.6.0
+kneed>=0.8.0

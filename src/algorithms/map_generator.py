@@ -256,11 +256,20 @@ class DepotPlacer:
                 print(f"    - Depot {i} placed at ({depot_pos.x:.1f}, 0, {depot_pos.z:.1f})")
         
         # If we need more depots, place them randomly (still at ground level)
-        while len(depot_positions) < num_depots:
+        max_random_attempts = 50  # Prevent infinite loop
+        random_attempt_count = 0
+        
+        while len(depot_positions) < num_depots and random_attempt_count < max_random_attempts:
             depot_pos = self._find_random_ground_depot_position(depot_width, depot_depth, depot_positions)
             if depot_pos:
                 depot_positions.append(depot_pos)
                 print(f"    - Depot {len(depot_positions)-1} placed at ({depot_pos.x:.1f}, 0, {depot_pos.z:.1f})")
+                random_attempt_count = 0  # Reset counter on success
+            else:
+                random_attempt_count += 1
+        
+        if len(depot_positions) < num_depots:
+            print(f"    WARNING: Could only place {len(depot_positions)}/{num_depots} depots. Map may be too crowded.")
         
         return depot_positions
     
@@ -326,16 +335,20 @@ class DepotPlacer:
         return False
     
     def _find_valid_ground_depot_position(self, preferred_pos: Position, width: float, depth: float,
-                                         existing_depots: List[Position] = None) -> Position:
+                                         existing_depots: List[Position] = None) -> Optional[Position]:
         """Find a valid ground-level position for depot near preferred position
         
         Ensures depot footprint doesn't overlap with building footprints or existing depots.
+        Uses expanding circle search to find the nearest valid position.
         
         Args:
-            preferred_pos: Preferred position to place depot
+            preferred_pos: Preferred position to place depot (from clustering)
             width: Depot width (x-axis)
             depth: Depot depth (z-axis)
             existing_depots: List of existing depot positions to avoid
+            
+        Returns:
+            Valid Position object if found, None otherwise
         """
         if existing_depots is None:
             existing_depots = []
@@ -345,44 +358,56 @@ class DepotPlacer:
         half_depth = depth / 2
         
         # Try the preferred position first
-        if (not self._check_ground_footprint_overlap(preferred_pos, width, depth) and
-            not self._check_depot_overlap(preferred_pos, width, depth, existing_depots)):
-            # Check map bounds
-            if (preferred_pos.x - half_width >= 0 and preferred_pos.x + half_width <= self.map.width and
-                preferred_pos.z - half_depth >= 0 and preferred_pos.z + half_depth <= self.map.depth):
+        if (preferred_pos.x - half_width >= 0 and preferred_pos.x + half_width <= self.map.width and
+            preferred_pos.z - half_depth >= 0 and preferred_pos.z + half_depth <= self.map.depth):
+            
+            if (not self._check_ground_footprint_overlap(preferred_pos, width, depth) and
+                not self._check_depot_overlap(preferred_pos, width, depth, existing_depots)):
+                # Preferred position is valid - return immediately
                 return Position(preferred_pos.x, depot_height / 2, preferred_pos.z)
         
-        # Try positions in expanding circles around preferred position (on x-z plane)
-        max_radius = min(self.map.width, self.map.depth) / 4
-        radius_step = max(width, depth) * 1.5
+        # Preferred position is not valid - search for nearest alternative
+        # Expanding circle search around preferred position
+        search_radius = 0
+        radius_step = max(width, depth) * 1.5  # Search radius increment
+        max_search_radius = min(self.map.width, self.map.depth) / 3  # Maximum search distance
         
-        for radius in range(int(radius_step), int(max_radius), int(radius_step)):
-            # Try positions at different angles on horizontal plane
-            for angle in range(0, 360, 30):  # Every 30 degrees
+        print(f"    Depot position ({preferred_pos.x:.1f}, {preferred_pos.z:.1f}) invalid, searching nearby...")
+        
+        while search_radius <= max_search_radius:
+            search_radius += radius_step
+            
+            # Try positions at different angles on the circle perimeter
+            # Use more angles for finer-grained search (every 45 degrees)
+            for angle in range(0, 360, 45):
                 angle_rad = math.radians(angle)
-                offset_x = radius * math.cos(angle_rad)
-                offset_z = radius * math.sin(angle_rad)
+                offset_x = search_radius * math.cos(angle_rad)
+                offset_z = search_radius * math.sin(angle_rad)
                 
                 test_pos = Position(
                     preferred_pos.x + offset_x,
-                    depot_height / 2,  # Ground level
+                    depot_height / 2,  # Ground level (centered)
                     preferred_pos.z + offset_z
                 )
                 
-                # Check bounds
+                # Check if test position is within map bounds
                 if (test_pos.x - half_width >= 0 and test_pos.x + half_width <= self.map.width and
                     test_pos.z - half_depth >= 0 and test_pos.z + half_depth <= self.map.depth):
                     
                     # Check if footprint overlaps with buildings or existing depots
                     if (not self._check_ground_footprint_overlap(test_pos, width, depth) and
                         not self._check_depot_overlap(test_pos, width, depth, existing_depots)):
+                        # Found a valid position - return immediately
+                        print(f"    ✓ Found alternative at ({test_pos.x:.1f}, {test_pos.z:.1f}), distance: {search_radius:.1f}m")
                         return test_pos
         
+        # Could not find a valid position within max search radius
+        print(f"    ✗ Warning: Could not find a valid spot for depot near ({preferred_pos.x:.1f}, {preferred_pos.z:.1f}). Skipping this depot.")
         return None
     
     def _find_random_ground_depot_position(self, width: float, depth: float, 
                                            existing_depots: List[Position] = None,
-                                           max_attempts: int = 200) -> Optional[Position]:
+                                           max_attempts: int = 500) -> Optional[Position]:
         """Find a random valid ground-level position for depot
         
         Args:
@@ -398,7 +423,10 @@ class DepotPlacer:
         half_width = width / 2
         half_depth = depth / 2
         
-        for _ in range(max_attempts):
+        building_overlaps = 0
+        depot_overlaps = 0
+        
+        for attempt in range(max_attempts):
             # Random position on ground plane
             x = random.uniform(half_width, self.map.width - half_width)
             z = random.uniform(half_depth, self.map.depth - half_depth)
@@ -406,9 +434,21 @@ class DepotPlacer:
             test_pos = Position(x, depot_height / 2, z)
             
             # Check if footprint overlaps with buildings or existing depots
-            if (not self._check_ground_footprint_overlap(test_pos, width, depth) and
-                not self._check_depot_overlap(test_pos, width, depth, existing_depots)):
+            building_overlap = self._check_ground_footprint_overlap(test_pos, width, depth)
+            depot_overlap = self._check_depot_overlap(test_pos, width, depth, existing_depots)
+            
+            if building_overlap:
+                building_overlaps += 1
+            if depot_overlap:
+                depot_overlaps += 1
+            
+            if not building_overlap and not depot_overlap:
                 return test_pos
+        
+        # Debug info if failed
+        print(f"      Failed to place depot after {max_attempts} attempts")
+        print(f"      - Building overlaps: {building_overlaps}/{max_attempts}")
+        print(f"      - Depot overlaps: {depot_overlaps}/{max_attempts}")
         
         return None
     

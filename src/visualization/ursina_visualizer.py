@@ -180,13 +180,25 @@ class UrsinaVisualizer:
             
             # Create new drone entity if it doesn't exist
             if drone.id not in self.drone_entities:
+                # Check collision status for new drone
+                collision_status = getattr(drone, 'collision_status', 'none')
+                
+                # Set initial color based on collision status
+                if collision_status == 'accidental':
+                    drone_color = color.red
+                else:
+                    drone_color = color.yellow
+                
+                # Set initial visibility
+                is_visible = (collision_status != 'destination_entry')
+                
                 drone_entity = Entity(
                     model='sphere',
                     scale=5,
-                    color=color.yellow,
+                    color=drone_color,
                     position=(drone.position.x, drone.position.y, drone.position.z),
-                    enabled=True,
-                    visible=True
+                    enabled=is_visible,
+                    visible=is_visible
                 )
                 self.drone_entities[drone.id] = drone_entity
                 
@@ -198,7 +210,7 @@ class UrsinaVisualizer:
                     color=color.black,
                     billboard=True,
                     origin=(0, 0),
-                    enabled=True
+                    enabled=is_visible
                 )
                 self.drone_labels[drone.id] = drone_label
             
@@ -206,17 +218,46 @@ class UrsinaVisualizer:
             else:
                 new_pos = (drone.position.x, drone.position.y, drone.position.z)
                 self.drone_entities[drone.id].position = new_pos
-                self.drone_entities[drone.id].enabled = True
-                self.drone_entities[drone.id].visible = True
                 
-                # Update label position
-                if drone.id in self.drone_labels:
+                # Update visibility and color based on collision status
+                collision_status = getattr(drone, 'collision_status', 'none')
+                
+                if collision_status == 'destination_entry':
+                    # Hide drone when entering destination building
+                    self.drone_entities[drone.id].visible = False
+                    self.drone_entities[drone.id].enabled = False
+                    
+                    # Hide label as well
+                    if drone.id in self.drone_labels:
+                        self.drone_labels[drone.id].enabled = False
+                
+                elif collision_status == 'accidental':
+                    # Show drone in red when accidentally colliding
+                    self.drone_entities[drone.id].visible = True
+                    self.drone_entities[drone.id].enabled = True
+                    self.drone_entities[drone.id].color = color.red
+                    
+                    # Show label
+                    if drone.id in self.drone_labels:
+                        self.drone_labels[drone.id].enabled = True
+                
+                else:  # collision_status == 'none'
+                    # Show drone in yellow (normal color)
+                    self.drone_entities[drone.id].visible = True
+                    self.drone_entities[drone.id].enabled = True
+                    self.drone_entities[drone.id].color = color.yellow
+                    
+                    # Show label
+                    if drone.id in self.drone_labels:
+                        self.drone_labels[drone.id].enabled = True
+                
+                # Update label position (if visible)
+                if drone.id in self.drone_labels and collision_status != 'destination_entry':
                     self.drone_labels[drone.id].position = (
                         drone.position.x,
                         drone.position.y + 5,
                         drone.position.z
                     )
-                    self.drone_labels[drone.id].enabled = True
         
         # Remove drones that are no longer active
         inactive_drone_ids = set(self.drone_entities.keys()) - active_drone_ids

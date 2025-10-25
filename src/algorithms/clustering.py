@@ -4,6 +4,7 @@ Clustering algorithms for grouping stores and customers (3D environment)
 
 import numpy as np
 from sklearn.cluster import KMeans, DBSCAN
+from kneed import KneeLocator
 from typing import List, Tuple, Dict, Union
 from ..models.entities import Building, Position, EntityType, Map, Store, Customer
 import config
@@ -129,6 +130,65 @@ class MixedClustering:
         self.kmeans = KMeans(n_clusters=n_clusters, random_state=42)
         self.cluster_centers_ = None
     
+    def find_optimal_k_auto(self, data_points: List[Tuple[float, float]], max_k: int = 10) -> int:
+        """Automatically find optimal number of clusters (k) using Elbow method with KneeLocator
+        
+        Args:
+            data_points: List of 2D coordinates [(x1, z1), (x2, z2), ...] with duplicates for density
+            max_k: Maximum k to try (default: 10)
+            
+        Returns:
+            Optimal k value (number of depots)
+        """
+        if len(data_points) < 2:
+            print("  Warning: Not enough data points for clustering. Using k=1")
+            return 1
+        
+        # Ensure max_k doesn't exceed number of data points
+        max_k = min(max_k, len(data_points))
+        
+        if max_k < 2:
+            print("  Warning: max_k < 2. Using k=1")
+            return 1
+        
+        print(f"  Finding optimal k using Elbow method (max_k={max_k})...")
+        
+        # Convert to numpy array
+        coords_array = np.array(data_points)
+        
+        # Calculate WCSS (Within-Cluster Sum of Squares) for different k values
+        wcss_values = []
+        k_values = range(1, max_k + 1)
+        
+        for k in k_values:
+            kmeans = KMeans(n_clusters=k, random_state=42, n_init=10)
+            kmeans.fit(coords_array)
+            wcss_values.append(kmeans.inertia_)
+            print(f"    k={k}: WCSS={kmeans.inertia_:.2f}")
+        
+        # Use KneeLocator to automatically find the elbow point
+        try:
+            knee = KneeLocator(
+                list(k_values), 
+                wcss_values, 
+                curve='convex', 
+                direction='decreasing',
+                interp_method='interp1d'
+            )
+            optimal_k = knee.elbow if knee.elbow else 1
+            
+            if optimal_k is None:
+                print("  Warning: Could not find elbow point. Using default k=3")
+                optimal_k = min(3, max_k)
+            else:
+                print(f"  ✓ Automatically determined optimal k (number of depots): {optimal_k}")
+        
+        except Exception as e:
+            print(f"  Warning: KneeLocator failed ({e}). Using default k=3")
+            optimal_k = min(3, max_k)
+        
+        return optimal_k
+    
     def cluster_stores_and_customers(self, map_obj: Map) -> Dict[int, Dict[str, List[Union[Store, Customer]]]]:
         """Cluster both stores and customers together based on 2D projection with density
         
@@ -248,25 +308,35 @@ class MixedClustering:
         
         return metrics
     
-    def get_optimal_depot_positions(self, clusters: Dict[int, Dict[str, List[Union[Store, Customer]]]], 
-                                  map_obj: Map) -> List[Position]:
-        """Get optimal depot positions from K-means cluster centers
+    def get_optimal_depot_positions(self, data_points: List[Tuple[float, float]], 
+                                  optimal_k: int) -> List[Position]:
+        """Get optimal depot positions by running K-means with the given k value
         
-        Returns the 2D cluster centers computed by K-means as ground-level positions.
-        These positions are naturally weighted by floor density.
+        Runs K-means clustering on 2D data points with the specified number of clusters.
+        Returns the cluster centers as ground-level depot positions.
         
         Args:
-            clusters: Cluster dictionary (not directly used, but kept for compatibility)
-            map_obj: Map object (not directly used, but kept for compatibility)
+            data_points: List of 2D coordinates [(x1, z1), (x2, z2), ...] with duplicates for density
+            optimal_k: Number of clusters (depots) to create
             
         Returns:
             List of 2D Position objects (x, 0, z) representing depot locations
         """
         depot_positions = []
         
-        if self.cluster_centers_ is None:
-            print("  Warning: No cluster centers available")
-            return depot_positions
+        if len(data_points) < optimal_k:
+            print(f"  Warning: Not enough data points ({len(data_points)}) for {optimal_k} clusters")
+            optimal_k = max(1, len(data_points))
+        
+        print(f"  Running K-means with k={optimal_k} to find depot positions...")
+        
+        # Convert to numpy array
+        coords_array = np.array(data_points)
+        
+        # Run K-means with optimal k
+        self.kmeans = KMeans(n_clusters=optimal_k, random_state=42, n_init=10)
+        self.kmeans.fit(coords_array)
+        self.cluster_centers_ = self.kmeans.cluster_centers_
         
         # Convert K-means cluster centers to Position objects (ground level)
         print(f"  Converting {len(self.cluster_centers_)} cluster centers to depot positions...")

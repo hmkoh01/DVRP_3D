@@ -54,7 +54,9 @@ class OrderGenerator:
             store_id=store_entity.id,
             customer_position=customer_entity.get_center(),
             store_position=store_entity.get_center(),
-            created_time=current_time
+            created_time=current_time,
+            store_building_id=store_entity.building_id,
+            customer_building_id=customer_entity.building_id
         )
         
         self.order_counter += 1

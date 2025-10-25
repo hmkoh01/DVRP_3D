@@ -216,6 +216,7 @@ class Drone:
     battery_level: float = 1.0  # 0.0 to 1.0
     speed: float = config.DRONE_SPEED  # horizontal speed (units per second)
     vertical_speed: float = config.DRONE_SPEED * 0.5  # vertical speed (units per second)
+    collision_status: str = 'none'  # 'none', 'accidental', 'destination_entry'
     
     def assign_order(self, order: 'Order'):
         """Assign an order to this drone"""
@@ -331,6 +332,8 @@ class Order:
     status: OrderStatus = OrderStatus.PENDING
     assigned_drone: Optional[Drone] = None
     estimated_delivery_time: Optional[float] = None
+    store_building_id: Optional[int] = None  # ID of building containing the store
+    customer_building_id: Optional[int] = None  # ID of building containing the customer
     
     def get_distance(self) -> float:
         """Calculate distance between store and customer"""
