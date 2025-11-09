@@ -286,6 +286,7 @@ class Drone:
         if distance > 0:
             # 전체 이동 거리 기준으로 이동
             move_distance = effective_speed * dt
+            self.battery_level -= move_distance / config.DRONE_BATTERY_LIFE
             
             if distance < move_distance:
                 # 목표 지점에 도착

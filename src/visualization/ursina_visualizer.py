@@ -297,7 +297,8 @@ class UrsinaVisualizer:
     
     def run(self):
         """Start the Ursina application loop"""
-        self.app.run()
+        while self.app.win and not self.app.win.is_closed():
+            self.app.step()
     
     def cleanup(self):
         """Cleanup resources"""

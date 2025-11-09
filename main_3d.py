@@ -10,6 +10,9 @@ Date: 2025
 import sys
 from typing import Optional
 from ursina import *
+ursina_time = time
+import time
+import threading
 
 # Add src to path
 sys.path.append('src')
@@ -49,15 +52,8 @@ class DVRP3DApplication:
     def initialize(self):
         """Initialize the application in the correct order"""
         try:
-            # 1. Initialize Visualizer (creates Ursina app)
-            print("\n1. 3D 시각화 시스템 초기화 중...")
-            self.visualizer = UrsinaVisualizer(
-                map_width=config.MAP_WIDTH,
-                map_depth=config.MAP_DEPTH
-            )
-            
-            # 2. Generate 3D map with buildings
-            print("\n2. 3D 지도 생성 중...")
+            # 1. Generate 3D map with buildings
+            print("\n1. 3D 지도 생성 중...")
             map_generator = MapGenerator(
                 map_width=config.MAP_WIDTH,
                 map_depth=config.MAP_DEPTH,
@@ -66,36 +62,46 @@ class DVRP3DApplication:
             )
             self.map = map_generator.generate_map()
             
-            # 3. Setup depots using clustering
-            print("\n3. 클러스터링 및 Depot 배치 중...")
+            # 2. Setup depots using clustering
+            print("\n2. 클러스터링 및 Depot 배치 중...")
             self._setup_depots()
             
-            # 4. Create map entities in visualizer
-            print("\n4. 3D 맵 엔티티 생성 중...")
-            self.visualizer.create_map_entities(self.map)
-            
-            # 5. Initialize order manager
-            print("\n5. 주문 관리 시스템 초기화 중...")
+            # 3. Initialize order manager
+            print("\n3. 주문 관리 시스템 초기화 중...")
             self.order_manager = OrderManager(self.map, seed=self.order_seed)
             
-            # 6. Initialize simulation engine
-            print("\n6. 시뮬레이션 엔진 초기화 중...")
+            # 4. Initialize simulation engine
+            print("\n4. 시뮬레이션 엔진 초기화 중...")
             self.simulation_engine = SimulationEngine(self.map, self.order_manager)
             
-            # 7. Setup UI
-            print("\n7. UI 패널 생성 중...")
-            self._setup_ui()
-            
-            print("\n초기화 완료!")
-            print("\n컨트롤:")
-            print("  SPACE: 시뮬레이션 시작/일시정지")
-            print("  R: 시뮬레이션 리셋")
-            print("  +/-: 시뮬레이션 속도 조절")
-            print("  H: 도움말 표시/숨기기")
-            print("  ESC: 종료")
-            print("  마우스 중간 버튼: 카메라 회전")
-            print("  마우스 오른쪽 버튼: 카메라 팬")
-            print("  스크롤: 줌")
+            if config.RUN_VISUALIZER:
+                # 5. Initialize Visualizer (creates Ursina app)
+                print("\n5. 3D 시각화 시스템 초기화 중...")
+                self.visualizer = UrsinaVisualizer(
+                    map_width=config.MAP_WIDTH,
+                    map_depth=config.MAP_DEPTH
+                )
+
+                # 6. Create map entities in visualizer
+                print("\n6. 3D 맵 엔티티 생성 중...")
+                self.visualizer.create_map_entities(self.map)
+                
+                # 7. Setup UI
+                print("\n7. UI 패널 생성 중...")
+                self._setup_ui()
+                
+                print("\n초기화 완료!")
+                print("\n컨트롤:")
+                print("  SPACE: 시뮬레이션 시작/일시정지")
+                print("  R: 시뮬레이션 리셋")
+                print("  +/-: 시뮬레이션 속도 조절")
+                print("  H: 도움말 표시/숨기기")
+                print("  ESC: 종료")
+                print("  마우스 중간 버튼: 카메라 회전")
+                print("  마우스 오른쪽 버튼: 카메라 팬")
+                print("  스크롤: 줌")
+            else:
+                self.visualizer = None
             
             return True
             
@@ -252,31 +258,21 @@ Stats:
         
         self.stats_text.text = ui_text
     
-    def update_simulation(self):
-        """Called every frame by Ursina
-        
-        This is the main update loop that:
-        1. Updates simulation logic
-        2. Updates drone visuals
-        3. Updates UI
-        """
-        # Update simulation engine (one step)
+    def update_simulation_with_visualizer(self):
+        start_t = time.time()
+        count = 1
+        while True:
+            time.sleep(max(count * config.SIMULATION_DELTA_TIME - (time.time() - start_t), 0))
+            count += 1
+
+            self.simulation_engine.update_step(config.SIMULATION_DELTA_TIME)
+
+    def update_simulation_without_visualizer(self):
         if self.simulation_engine:
-            self.simulation_engine.update_step(time.dt)
-            
-            # Update drone visuals
-            active_drones = self.simulation_engine.get_active_drones()
-            self.visualizer.update_drone_visuals(active_drones)
-            
-            # Update UI
-            self._update_ui()
-        
-        # Handle keyboard input
-        self._handle_input()
-        
-        # Call visualizer update (for camera controls, etc.)
-        if self.visualizer:
-            self.visualizer.update()
+            t = 0
+            while config.RUN_VISUALIZER or t < config.SIMULATION_TIME:
+                self.simulation_engine.update_step(config.SIMULATION_DELTA_TIME)
+                t += config.SIMULATION_DELTA_TIME
     
     def _handle_input(self):
         """Handle keyboard input"""
@@ -341,7 +337,13 @@ Stats:
         
         # Run Ursina app
         # The update_simulation() will be called every frame
-        self.visualizer.run()
+        if config.RUN_VISUALIZER:
+            thread = threading.Thread(target=self.update_simulation_with_visualizer)
+            thread.daemon = True
+            thread.start()
+            self.visualizer.run()
+        else:
+            self.update_simulation_without_visualizer()
     
     def cleanup(self):
         """Cleanup resources"""
@@ -367,7 +369,17 @@ Stats:
         
         if stats['total_orders_processed'] > 0:
             success_rate = (stats['total_deliveries_completed'] / stats['total_orders_processed']) * 100
-            print(f"배달 성공률: {success_rate:.1f}%")
+            print(f"배달 성공률: {success_rate:.1f}%\n")
+        
+        print("고정비")
+        print(f"depot 비용: {stats['depot_cost']: ,.2f}원")
+        print(f"드론 이용: {stats['drone_cost']: ,.2f}원\n")
+
+        print("변동비")
+        print(f"충전 비용: {stats['charging_cost']: ,.2f}원")
+        print(f"패널티 비용: {stats['penalty_cost']: ,.2f}원\n")
+
+        print(f"총 비용: {(stats['depot_cost'] + stats['drone_cost']) * config.FIXED_COST_WEIGHT + stats['charging_cost'] + stats['penalty_cost']: ,.2f}원")
         
         print("=" * 60)
 
@@ -378,9 +390,22 @@ app_instance = None
 
 def update():
     """Global update function called by Ursina every frame"""
-    global app_instance
-    if app_instance:
-        app_instance.update_simulation()
+
+    # Update simulation engine (one step)
+    if app_instance.simulation_engine:
+        # Update drone visuals
+        active_drones = app_instance.simulation_engine.get_active_drones()
+        app_instance.visualizer.update_drone_visuals(active_drones)
+        
+        # Update UI
+        app_instance._update_ui()
+    
+    # Handle keyboard input
+    app_instance._handle_input()
+    
+    # Call visualizer update (for camera controls, etc.)
+    if app_instance.visualizer:
+        app_instance.visualizer.update()
 
 
 def main():

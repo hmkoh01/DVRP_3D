@@ -1,5 +1,10 @@
 # Configuration file for DVRP simulation (3D)
 
+RUN_VISUALIZER = False
+SIMULATION_DELTA_TIME = 0.05 # s
+if not RUN_VISUALIZER:
+    SIMULATION_TIME = 360 # s
+
 # Map configuration
 MAP_SEED = 123
 ORDER_SEED = 456
@@ -37,9 +42,11 @@ ORDER_GENERATION_RATE = 0.001  # Orders per second
 MAX_ORDER_DELAY = 300  # Maximum seconds to wait for order
 
 # Drone configuration
-DRONE_SPEED = 50  # Units per second
+DRONE_SPEED = 15  # m/s
 DRONE_CAPACITY = 1  # Number of orders per drone
-DRONE_BATTERY_LIFE = 3600  # Seconds
+DRONE_BATTERY_LIFE = 25000 # m
+DRONE_CHARGING_SPEED = 0.00455 # /s
+DRONE_BATTERY_CAPACITY = 2 # kWh
 
 # Clustering configuration
 CLUSTERING_ALGORITHM = "kmeans"  # "kmeans" or "dbscan"
@@ -59,3 +66,15 @@ COLORS = {
     'route': (255, 165, 0),
     'background': (240, 240, 240)
 }
+
+# Fixed Cost
+DEPOT_COST = 3_000_000 # won
+DRONE_COST = 1_000_000 # won
+
+# Variable Cost
+CHARGING_COST = 300 # won / kWh
+TIME_PENALTY_CRITERIA = 120 # s
+TIME_PENALTY = 5 # won / s
+
+# Fixed Cost Weight
+FIXED_COST_WEIGHT = 1 / 365

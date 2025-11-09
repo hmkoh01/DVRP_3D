@@ -29,14 +29,18 @@ class SimulationEngine:
         
         # Event system (simple callback-based)
         self.event_handlers = {}
-        
+
         # Statistics
         self.stats = {
             'total_orders_processed': 0,
             'total_deliveries_completed': 0,
             'average_delivery_time': 0.0,
             'total_drone_distance': 0.0,
-            'simulation_duration': 0.0
+            'simulation_duration': 0.0,
+            'depot_cost': config.TOTAL_DEPOTS * config.DEPOT_COST,
+            'drone_cost': config.TOTAL_DEPOTS * config.DRONES_PER_DEPOT * config.DRONE_COST,
+            'charging_cost': 0,
+            'penalty_cost': 0
         }
     
     def start_simulation(self):
@@ -149,11 +153,16 @@ class SimulationEngine:
         if drone.status == DroneStatus.IDLE:
             # Reset collision status when idle
             drone.collision_status = 'none'
-            return
+            # if drone.battery_level == 1: return
+            battery_level = min(1, drone.battery_level + delta_time * config.DRONE_CHARGING_SPEED)
+            self.stats['charging_cost'] += (battery_level - drone.battery_level) * config.DRONE_BATTERY_CAPACITY * config.CHARGING_COST
+            drone.battery_level = battery_level
 
-        # Update drone's 3D position and state
-        # The Drone.update_position() method in entities.py handles all 3D logic
-        drone.update_position(delta_time)
+            return
+        else:
+            # Update drone's 3D position and state
+            # The Drone.update_position() method in entities.py handles all 3D logic
+            drone.update_position(delta_time)
     
     def _check_drone_collision(self, drone: Drone):
         """Check if drone is colliding with a building and update collision status
@@ -213,6 +222,8 @@ class SimulationEngine:
                 if hasattr(order, 'created_time') and order.created_time is not None:
                     delivery_time = self.simulation_time - order.created_time
                     if delivery_time >= 0:  # Ensure non-negative delivery time
+                        if delivery_time > config.TIME_PENALTY_CRITERIA:
+                            self.stats['penalty_cost'] += (delivery_time - config.TIME_PENALTY_CRITERIA) * config.TIME_PENALTY
                         total_delivery_time += delivery_time
                         valid_orders += 1
             
@@ -341,7 +352,11 @@ class SimulationEngine:
             'total_deliveries_completed': 0,
             'average_delivery_time': 0.0,
             'total_drone_distance': 0.0,
-            'simulation_duration': 0.0
+            'simulation_duration': 0.0,
+            'depot_cost': config.TOTAL_DEPOTS * config.DEPOT_COST,
+            'drone_cost': config.TOTAL_DEPOTS * config.DRONES_PER_DEPOT * config.DRONE_COST,
+            'charging_cost': 0,
+            'penalty_cost': 0
         }
         
         # Reset order manager
