@@ -304,7 +304,7 @@ class OrderValidator:
                           order.store_position.distance_to(order.customer_position) +
                           order.customer_position.distance_to(drone.depot.get_center()))
         
-        max_distance = drone.battery_level * drone.speed * config.DRONE_BATTERY_LIFE
+        max_distance = drone.battery_level * config.DRONE_BATTERY_LIFE
         
         return total_distance <= max_distance
     

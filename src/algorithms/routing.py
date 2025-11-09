@@ -581,7 +581,7 @@ class RouteValidator:
         for i in range(len(route) - 1):
             total_distance += route[i].distance_to(route[i + 1])
         
-        max_distance = drone.battery_level * drone.speed * config.DRONE_BATTERY_LIFE
+        max_distance = drone.battery_level * config.DRONE_BATTERY_LIFE
         
         if total_distance > max_distance:
             return False, f"Route distance {total_distance:.2f} exceeds battery range {max_distance:.2f}"
