@@ -174,18 +174,20 @@ class MultiLevelAStarRouting(RoutingAlgorithm):
 
             # 기준선이 건물을 통과하는지 확인
             # destination_building_id는 관련 없으므로 None 전달
-            if self._segment_collides_3d(p1, p2, destination_building_id=None, only_building=building):
+            if self._segment_collides_3d(p1, p2, destination_building_id=None, buildings_to_check=[building]):
                  relevant_buildings.append(building)
         return relevant_buildings
             
     def _segment_collides_3d(self, p1: Position, p2: Position,
                                # start_building_id: Optional[int] = None, # 더 이상 사용 안 함
                                destination_building_id: Optional[int] = None, # 도착 건물 ID는 유지
-                               only_building: Optional[Building] = None) -> bool:
+                               buildings_to_check: Optional[List[Building]] = None) -> bool:
         """3D 선분 p1-p2가 건물과 충돌하는지 검사합니다.
            선분의 양 끝점이 속한 건물은 충돌 검사에서 제외합니다.
         """
-        buildings_to_check = [only_building] if only_building else self.map.buildings
+
+        if buildings_to_check == None:
+            buildings_to_check = self.map.buildings
 
         # 선분 끝점이 속한 건물 ID 찾기 (매번 계산)
         p1_building = self.map.get_building_containing_point(p1)
@@ -263,7 +265,7 @@ class MultiLevelAStarRouting(RoutingAlgorithm):
                 p2 = Position(*n2_tuple)
 
                 # 도착 건물 ID는 dest_id 사용, 선분 끝점 건물은 함수 내부에서 자동으로 제외됨
-                if not self._segment_collides_3d(p1, p2, destination_building_id=dest_id):
+                if not self._segment_collides_3d(p1, p2, destination_building_id=dest_id, buildings_to_check=relevant_buildings):
                     weight = self._euclidean_distance_3d(n1_tuple, n2_tuple)
                     G.add_edge(n1_tuple, n2_tuple, weight=weight)
                     edges_added += 1
@@ -410,6 +412,34 @@ class MultiLevelAStarRouting(RoutingAlgorithm):
         ax.legend(loc='upper right', fontsize=10)
         plt.show()
 
+    def calculate_route_rec(self, start, end, depth=0) -> List[Position]:
+        if depth > 100: return None
+
+        dest_building = self.map.get_building_containing_point(end)
+        dest_id = dest_building.id if dest_building else None
+        is_direct_path_safe = not self._segment_collides_3d(start, end, destination_building_id=dest_id)
+
+        if is_direct_path_safe:
+            return [start, end]
+
+        route = self._find_path_core(start, end)
+        if not route or len(route) < 2:
+            return None
+
+        full_route = [route[0]]
+        for i in range(len(route) - 1):
+            is_step_safe = not self._segment_collides_3d(route[i], route[i+1], destination_building_id=dest_id)
+            if is_step_safe:
+                full_route.append[route[i+1]]
+            else:
+                extended_route = self.calculate_route_rec(route[i], route[i+1], depth + 1)
+                if not extended_route: return None
+
+                full_route.extend(extended_route[1:])
+
+        return full_route
+
+
     def calculate_route(self, start: Position, waypoints: List[Position], end: Position) -> List[Position]:
         """점진적 경로 탐색(Incremental Pathfinding)을 사용하여 전체 경로를 계산합니다."""
         full_route = [start]
@@ -418,62 +448,14 @@ class MultiLevelAStarRouting(RoutingAlgorithm):
         current_segment_start = start
 
         for segment_end in segment_targets:
-            working_path_segment = [current_segment_start] # 현재 세그먼트의 경로
-            u_prime = current_segment_start
-            v_final_segment = segment_end # 이번 세그먼트의 최종 목표
+            current_segment_start = segment_end
 
-            MAX_ITERATIONS = 100 # 무한 루프 방지
-            iterations = 0
-
-            while u_prime != v_final_segment and iterations < MAX_ITERATIONS:
-                iterations += 1
-
-                # 1. 현재 위치에서 세그먼트 끝까지 직접 갈 수 있는지 확인 (모든 건물 대상)
-                dest_building = self.map.get_building_containing_point(v_final_segment)
-                dest_id = dest_building.id if dest_building else None
-                is_direct_path_safe = not self._segment_collides_3d(u_prime, v_final_segment, destination_building_id=dest_id)
-
-                if is_direct_path_safe:
-                    # 직접 경로가 안전하면 바로 이동하고 이 세그먼트 종료
-                    working_path_segment.append(v_final_segment)
-                    u_prime = v_final_segment # 루프 종료 조건 만족
-                    # print(f"   Direct path found from {u_prime} to {v_final_segment}")
-                    break # while 루프 종료
-
-                # 2. 직접 경로가 막혔으면, CORE 알고리즘으로 다음 스텝 찾기
-                # CORE는 u_prime에서 v_final_segment까지의 기준선 장애물만 고려
-                partial_path_nodes = self._find_path_core(u_prime, v_final_segment)
-
-                if not partial_path_nodes or len(partial_path_nodes) < 2:
-                    print(f"❌ Routing Error: Path calculation failed")
-                    return []
-
-                # 3. CORE가 제안한 다음 스텝(p2) 추출
-                p1_node = partial_path_nodes[0] # u_prime과 동일
-                p2_node = partial_path_nodes[1]
-                p1_pos = Position(*p1_node)
-                p2_pos = Position(*p2_node)
-
-                # 4. 제안된 첫 스텝(p1 -> p2)이 실제로 안전한지 *모든* 건물 기준으로 재확인
-                # (CORE는 필터링된 그래프만 봤으므로 재확인 필요)
-                # p1, p2가 속한 건물은 충돌 검사에서 제외됨
-                is_first_step_safe = not self._segment_collides_3d(p1_pos, p2_pos, destination_building_id=dest_id) # 도착지 건물 ID 전달 유지
-
-                if is_first_step_safe:
-                    # 첫 스텝이 안전하면 그곳으로 이동하고, 다음 목표는 다시 세그먼트 끝(v_final_segment)
-                    working_path_segment.append(p2_pos)
-                    u_prime = p2_pos
-                else:
-                    print(f"❌ Routing Error: Unsafe path segment detected")
-                    return []
-
-            if iterations >= MAX_ITERATIONS:
-                print(f"❌ Routing Error: Max iterations reached")
+            working_path_segment = self.calculate_route_rec(current_segment_start, segment_end)
+            if not working_path_segment:
+                print(f"❌ Routing Error: Path calculation failed")
                 return []
-
-            # 현재 세그먼트 경로를 전체 경로에 추가 (시작점 제외)
-            full_route.extend(working_path_segment[1:])
-            current_segment_start = segment_end # 다음 세그먼트 시작점 업데이트
+            else:
+                full_route.extend(working_path_segment[1:])
 
         return full_route
     
