@@ -422,7 +422,7 @@ class MultiLevelAStarRouting(RoutingAlgorithm):
         if is_direct_path_safe:
             return [start, end]
 
-        route = self._find_path_core(start, end)
+        route = [Position(*p) for p in self._find_path_core(start, end)]
         if not route or len(route) < 2:
             return None
 
@@ -430,7 +430,7 @@ class MultiLevelAStarRouting(RoutingAlgorithm):
         for i in range(len(route) - 1):
             is_step_safe = not self._segment_collides_3d(route[i], route[i+1], destination_building_id=dest_id)
             if is_step_safe:
-                full_route.append[route[i+1]]
+                full_route.append(route[i+1])
             else:
                 extended_route = self.calculate_route_rec(route[i], route[i+1], depth + 1)
                 if not extended_route: return None
@@ -448,14 +448,14 @@ class MultiLevelAStarRouting(RoutingAlgorithm):
         current_segment_start = start
 
         for segment_end in segment_targets:
-            current_segment_start = segment_end
-
             working_path_segment = self.calculate_route_rec(current_segment_start, segment_end)
             if not working_path_segment:
                 print(f"❌ Routing Error: Path calculation failed")
                 return []
             else:
                 full_route.extend(working_path_segment[1:])
+
+            current_segment_start = segment_end
 
         return full_route
     
