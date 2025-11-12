@@ -1,6 +1,6 @@
 # Configuration file for DVRP simulation (3D)
 
-RUN_VISUALIZER = False
+RUN_VISUALIZER = True
 SIMULATION_DELTA_TIME = 0.05 # s
 if not RUN_VISUALIZER:
     SIMULATION_TIME = 3600 # s

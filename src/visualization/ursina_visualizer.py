@@ -63,8 +63,6 @@ class UrsinaVisualizer:
         # Add lighting
         self.setup_lighting()
         
-        # Add sky
-        self.sky = Sky()
         
     def setup_lighting(self):
         """Setup scene lighting"""
