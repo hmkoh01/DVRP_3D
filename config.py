@@ -3,7 +3,7 @@
 RUN_VISUALIZER = False
 SIMULATION_DELTA_TIME = 0.05 # s
 if not RUN_VISUALIZER:
-    SIMULATION_TIME = 360 # s
+    SIMULATION_TIME = 3600 # s
 
 # Map configuration
 MAP_SEED = 123
