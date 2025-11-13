@@ -8,6 +8,8 @@ from typing import Sequence as TypingSequence
 
 from ursina import *
 from ursina import lights as ursina_lights
+
+import config
 from src.models.entities import Map, Building, Depot, Drone, EntityType, Position
 
 
@@ -162,8 +164,11 @@ class UrsinaVisualizer:
         
         # Setup camera (EditorCamera for free mouse control)
         self.camera = EditorCamera()
-        self.camera.position = (map_width/2, 1200, -1000)
-        self.camera.rotation_x = 40
+        self.camera.position = (map_width/2, 2300, map_depth/2)
+        self.camera.rotation_x = 90
+        camera_speed = getattr(config, "CAMERA_MOVE_SPEED", None)
+        if camera_speed:
+            self.camera.move_speed = camera_speed
         
         # Create ground plane
         self.ground = Entity(
@@ -185,6 +190,7 @@ class UrsinaVisualizer:
         # Store map dimensions
         self.map_width = map_width
         self.map_depth = map_depth
+        self.height_scale = getattr(config, "VISUALIZATION_HEIGHT_SCALE", 1.0)
         
         # Entity storage
         self.building_entities: List[Entity] = []
@@ -213,26 +219,42 @@ class UrsinaVisualizer:
         # Explicitly disable heavy shadow rendering for performance
         self.sun.shadows = False
     
-    def _create_building_entity(self, building: Building, bldg_color, alpha: float) -> Entity:
+    def _get_scaled_height_and_center(self, building: Building) -> Tuple[float, float]:
+        scaled_height = building.height * self.height_scale
+        base_y = building.position.y - (building.height / 2)
+        scaled_center_y = base_y + (scaled_height / 2)
+        return scaled_height, scaled_center_y
+
+    def _create_building_entity(
+        self,
+        building: Building,
+        bldg_color,
+        alpha: float,
+        scaled_height: float,
+        scaled_center_y: float
+    ) -> Optional[Entity]:
+        if scaled_height <= 0:
+            return None
+
         footprint = getattr(building, "footprint", None)
         if footprint and len(footprint) >= 3:
             center_x = building.position.x
             center_z = building.position.z
             local_points = [(x - center_x, z - center_z) for x, z in footprint]
-            mesh = _build_prism_mesh(local_points, building.height)
+            mesh = _build_prism_mesh(local_points, scaled_height)
             if mesh:
                 return Entity(
                     model=mesh,
-                    position=(center_x, building.position.y, center_z),
+                    position=(center_x, scaled_center_y, center_z),
                     color=bldg_color,
                     alpha=alpha,
                     collider='mesh'
                 )
-        
+
         return Entity(
             model='cube',
-            position=(building.position.x, building.position.y, building.position.z),
-            scale=(building.width, building.height, building.depth),
+            position=(building.position.x, scaled_center_y, building.position.z),
+            scale=(building.width, scaled_height, building.depth),
             color=bldg_color,
             alpha=alpha,
             collider='box'
@@ -260,7 +282,19 @@ class UrsinaVisualizer:
                 bldg_color = color.white
                 alpha = 0.9
             
-            building_entity = self._create_building_entity(building, bldg_color, alpha)
+            scaled_height, scaled_center_y = self._get_scaled_height_and_center(building)
+            if scaled_height <= 0:
+                continue
+
+            building_entity = self._create_building_entity(
+                building,
+                bldg_color,
+                alpha,
+                scaled_height,
+                scaled_center_y
+            )
+            if building_entity is None:
+                continue
             self.building_entities.append(building_entity)
             
             # Add label for stores and customers
@@ -268,7 +302,11 @@ class UrsinaVisualizer:
                 label_text = "STORE" if building.entity_type == EntityType.STORE else "CUSTOMER"
                 label = Text(
                     text=f"{label_text}\n{building.id}",
-                    position=(building.position.x, building.position.y + building.height/2 + 5, building.position.z),
+                    position=(
+                        building.position.x,
+                        scaled_center_y + scaled_height/2 + 5,
+                        building.position.z
+                    ),
                     scale=2,
                     color=color.white,
                     billboard=True,

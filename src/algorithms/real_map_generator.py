@@ -180,6 +180,10 @@ class RealMapGenerator(MapGenerator):
         scale_x = usable_width / max(max_x - min_x, 1.0)
         scale_z = usable_depth / max(max_z - min_z, 1.0)
 
+        # Use uniform scaling to avoid footprint distortion
+        uniform_scale = min(scale_x, scale_z)
+        scale_x = scale_z = uniform_scale
+
         return scale_x, scale_z, border_x, border_z
 
     def _derive_height(self, properties: dict) -> float:
@@ -190,7 +194,8 @@ class RealMapGenerator(MapGenerator):
                 return None
 
         height = _as_float(properties.get("HEIGHT"))
-
+        return height
+        '''
         if not height or height <= 0:
             absolute = _as_float(properties.get("ABSOLUTE_HEIGHT"))
             base = _as_float(properties.get("CONT"))
@@ -209,11 +214,12 @@ class RealMapGenerator(MapGenerator):
 
         floors = max(1, int(round(height / config.FLOOR_HEIGHT)))
         quantized_height = floors * config.FLOOR_HEIGHT
+
         return max(
             config.BUILDING_MIN_HEIGHT * 0.5,
             min(quantized_height, config.BUILDING_MAX_HEIGHT),
         )
-
+        '''
     def _get_outer_ring(self, geometry: dict) -> Optional[List[Tuple[float, float]]]:
         for ring in self._iter_rings(geometry):
             if ring:

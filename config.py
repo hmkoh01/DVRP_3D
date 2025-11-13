@@ -3,7 +3,7 @@ from pathlib import Path
 
 # Configuration file for DVRP simulation (3D)
 
-RUN_VISUALIZER = True
+RUN_VISUALIZER = False
 SIMULATION_DELTA_TIME = 0.05 # s
 if not RUN_VISUALIZER:
     SIMULATION_TIME = 3600 # s
@@ -17,10 +17,10 @@ MAP_GEOJSON_PATH = "src/map/buildings.geojson"  # Override if your data lives el
 MAP_BUILDING_LIMIT = None  # Set to int to cap imported buildings for testing
 
 # 3D Map dimensions
-MAP_WIDTH = 1000  # X-axis (horizontal)
+MAP_WIDTH = 2000  # X-axis (horizontal)
 MAP_HEIGHT = 1000  # Z-axis (horizontal, called HEIGHT for backward compatibility)
-MAP_DEPTH = 1000  # Z-axis (depth, same as MAP_HEIGHT)
-MAX_MAP_HEIGHT = 150  # Y-axis (maximum altitude for drones)
+MAP_DEPTH = 2000  # Z-axis (depth, same as MAP_HEIGHT)
+MAX_MAP_HEIGHT = 500  # Y-axis (maximum altitude for drones)
 
 # Building configuration
 TOTAL_BUILDINGS = 30
@@ -30,7 +30,9 @@ BUILDING_MIN_HEIGHT = 50  # Minimum building height (Y-axis)
 BUILDING_MAX_HEIGHT = 200  # Maximum building height (Y-axis)
 FLOOR_HEIGHT = 3.0  # Height of each floor in meters
 BUILDING_SAFETY_MARGIN = 15.0  # Safety distance between buildings (in meters)
-BUILDING_HEIGHT_SCALE = 0.5  # Multiplier to globally scale real-world building heights
+BUILDING_HEIGHT_SCALE = 1  # Multiplier to globally scale real-world building heights
+VISUALIZATION_HEIGHT_SCALE = 1.0  # Multiplier applied only when rendering in Ursina
+CAMERA_MOVE_SPEED = 200.0  # EditorCamera move speed for visualization (units/sec)
 
 # Building type ratios (should add up to <= 1.0)
 STORE_RATIO = 0.3  # 30% of buildings are stores
@@ -45,8 +47,10 @@ DEPOT_SAFETY_MARGIN = 30.0  # Safety distance from buildings (in meters)
 
 # Simulation configuration
 SIMULATION_SPEED = 1.0  # Real-time multiplier
-ORDER_GENERATION_RATE = 0.001  # Orders per second
+ORDER_GENERATION_RATE = 0.0003  # Orders per second (lower to avoid overload)
 MAX_ORDER_DELAY = 300  # Maximum seconds to wait for order
+ROUTE_RETRY_INTERVAL = 60.0  # Seconds to wait before retrying failed routes
+ROUTE_RETRY_MAX_ATTEMPTS = 3  # How many times to retry routing an order
 
 # Drone configuration
 DRONE_SPEED = 15  # m/s

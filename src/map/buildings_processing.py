@@ -242,11 +242,6 @@ def preprocess_data(terrain_gdf, building_gdf, spot_elevation_gdf):
 
     processed_buildings = _resolve_heights(processed_buildings)
 
-    height_scale = getattr(config, "BUILDING_HEIGHT_SCALE", 1.0)
-    if height_scale != 1.0:
-        print(f"    - 높이 스케일링 계수 적용: x{height_scale}")
-    processed_buildings['HEIGHT'] = processed_buildings['HEIGHT'] * height_scale
-
     # 6. 건물의 절대 높이 계산: 건물의 최종 높이 = 바닥의 해발고도(CONT) + 건물 자체 높이(HEIGHT)
     processed_buildings['ABSOLUTE_HEIGHT'] = processed_buildings['CONT'].fillna(0) + processed_buildings['HEIGHT']
 
