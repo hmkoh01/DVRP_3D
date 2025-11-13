@@ -2,9 +2,142 @@
 Ursina-based 3D Visualizer for DVRP Simulation
 """
 
+import math
+from typing import Dict, List, Optional, Tuple
+from typing import Sequence as TypingSequence
+
 from ursina import *
-from typing import Dict, List, Optional
+from ursina import lights as ursina_lights
 from src.models.entities import Map, Building, Depot, Drone, EntityType, Position
+
+
+def _ensure_directional_light_shadow_setter():
+    """Patch Ursina 5.2 DirectionalLight which lacks a setter for 'shadows'."""
+    shadow_prop = getattr(ursina_lights.DirectionalLight, "shadows", None)
+    if isinstance(shadow_prop, property) and shadow_prop.fset is None:
+
+        def _set_shadows(self, value):
+            cast = bool(value)
+            self._shadows = cast
+            self._light.setShadowCaster(cast)
+            if cast:
+                self.update_bounds()
+
+        ursina_lights.DirectionalLight.shadows = property(
+            shadow_prop.fget,
+            _set_shadows,
+            shadow_prop.fdel,
+            shadow_prop.__doc__,
+        )
+
+
+_ensure_directional_light_shadow_setter()
+
+
+def _polygon_area(points: TypingSequence[Tuple[float, float]]) -> float:
+    area = 0.0
+    for i in range(len(points)):
+        x1, z1 = points[i]
+        x2, z2 = points[(i + 1) % len(points)]
+        area += x1 * z2 - x2 * z1
+    return area / 2.0
+
+
+def _ensure_ccw(points: TypingSequence[Tuple[float, float]]) -> List[Tuple[float, float]]:
+    pts = list(points)
+    if _polygon_area(pts) < 0:
+        pts.reverse()
+    return pts
+
+
+def _is_convex(a, b, c) -> bool:
+    return ((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])) > 0
+
+
+def _point_in_triangle(p, a, b, c) -> bool:
+    # Barycentric technique
+    denom = (b[1] - c[1]) * (a[0] - c[0]) + (c[0] - b[0]) * (a[1] - c[1])
+    if abs(denom) < 1e-8:
+        return False
+    w1 = ((b[1] - c[1]) * (p[0] - c[0]) + (c[0] - b[0]) * (p[1] - c[1])) / denom
+    w2 = ((c[1] - a[1]) * (p[0] - c[0]) + (a[0] - c[0]) * (p[1] - c[1])) / denom
+    w3 = 1 - w1 - w2
+    return (0 < w1 < 1) and (0 < w2 < 1) and (0 < w3 < 1)
+
+
+def _triangulate_polygon(points: TypingSequence[Tuple[float, float]]) -> List[Tuple[int, int, int]]:
+    pts = _ensure_ccw(points)
+    if len(pts) < 3:
+        return []
+
+    indices = list(range(len(pts)))
+    triangles: List[Tuple[int, int, int]] = []
+    guard = 0
+
+    while len(indices) > 3 and guard < 2000:
+        ear_found = False
+        for i in range(len(indices)):
+            prev_idx = indices[i - 1]
+            curr_idx = indices[i]
+            next_idx = indices[(i + 1) % len(indices)]
+
+            a, b, c = pts[prev_idx], pts[curr_idx], pts[next_idx]
+            if not _is_convex(a, b, c):
+                continue
+
+            if any(
+                _point_in_triangle(pts[k], a, b, c)
+                for k in indices
+                if k not in (prev_idx, curr_idx, next_idx)
+            ):
+                continue
+
+            triangles.append((prev_idx, curr_idx, next_idx))
+            del indices[i]
+            ear_found = True
+            break
+
+        if not ear_found:
+            break
+        guard += 1
+
+    if len(indices) == 3:
+        triangles.append(tuple(indices))
+
+    if not triangles:
+        for i in range(1, len(pts) - 1):
+            triangles.append((0, i, i + 1))
+
+    return triangles
+
+
+def _build_prism_mesh(points: TypingSequence[Tuple[float, float]], height: float) -> Optional[Mesh]:
+    if len(points) < 3 or height <= 0:
+        return None
+
+    pts = _ensure_ccw(points)
+    n = len(pts)
+    half_height = height / 2
+
+    vertices: List[Vec3] = []
+    for x, z in pts:
+        vertices.append(Vec3(x, -half_height, z))
+    for x, z in pts:
+        vertices.append(Vec3(x, half_height, z))
+
+    triangles: List[int] = []
+    tri_indices = _triangulate_polygon(pts)
+
+    for a, b, c in tri_indices:
+        triangles.extend([a + n, b + n, c + n])  # Top
+        triangles.extend([c, b, a])  # Bottom (flipped)
+
+    for i in range(n):
+        j = (i + 1) % n
+        triangles.extend([i, j, j + n])
+        triangles.extend([i, j + n, i + n])
+
+    return Mesh(vertices=vertices, triangles=triangles, mode='triangle')
 
 
 class UrsinaVisualizer:
@@ -29,19 +162,18 @@ class UrsinaVisualizer:
         
         # Setup camera (EditorCamera for free mouse control)
         self.camera = EditorCamera()
-        self.camera.position = (map_width/2, 200, -200)
-        self.camera.rotation_x = 30
+        self.camera.position = (map_width/2, 1200, -1000)
+        self.camera.rotation_x = 40
         
         # Create ground plane
         self.ground = Entity(
             model='plane',
-            scale=(map_width, 1, map_depth),
+            scale=(map_width, 0, map_depth),
             position=(map_width/2, 0, map_depth/2),
-            color=color.gray,
-            texture='white_cube',
+            texture= 'grass',
             collider='box'
         )
-        
+        '''
         # Add grid lines for better depth perception
         self.grid = Entity(
             model=Grid(map_width, map_depth),
@@ -49,7 +181,7 @@ class UrsinaVisualizer:
             color=color.dark_gray,
             alpha=0.3
         )
-        
+        '''
         # Store map dimensions
         self.map_width = map_width
         self.map_depth = map_depth
@@ -62,6 +194,9 @@ class UrsinaVisualizer:
         
         # Add lighting
         self.setup_lighting()
+
+        # Add sky
+        self.sky = Sky()
         
         
     def setup_lighting(self):
@@ -74,6 +209,33 @@ class UrsinaVisualizer:
             position=(100, 100, -100),
             rotation=(45, -45, 0),
             color=color.white
+        )
+        # Explicitly disable heavy shadow rendering for performance
+        self.sun.shadows = False
+    
+    def _create_building_entity(self, building: Building, bldg_color, alpha: float) -> Entity:
+        footprint = getattr(building, "footprint", None)
+        if footprint and len(footprint) >= 3:
+            center_x = building.position.x
+            center_z = building.position.z
+            local_points = [(x - center_x, z - center_z) for x, z in footprint]
+            mesh = _build_prism_mesh(local_points, building.height)
+            if mesh:
+                return Entity(
+                    model=mesh,
+                    position=(center_x, building.position.y, center_z),
+                    color=bldg_color,
+                    alpha=alpha,
+                    collider='mesh'
+                )
+        
+        return Entity(
+            model='cube',
+            position=(building.position.x, building.position.y, building.position.z),
+            scale=(building.width, building.height, building.depth),
+            color=bldg_color,
+            alpha=alpha,
+            collider='box'
         )
         
     def create_map_entities(self, map_data: Map):
@@ -98,17 +260,7 @@ class UrsinaVisualizer:
                 bldg_color = color.white
                 alpha = 0.9
             
-            # Create building entity
-            # Building position is already centered (x, height/2, z)
-            building_entity = Entity(
-                model='cube',
-                position=(building.position.x, building.position.y, building.position.z),
-                scale=(building.width, building.height, building.depth),
-                color=bldg_color,
-                alpha=alpha,
-                collider='box'
-            )
-            
+            building_entity = self._create_building_entity(building, bldg_color, alpha)
             self.building_entities.append(building_entity)
             
             # Add label for stores and customers
@@ -310,7 +462,7 @@ class UrsinaVisualizer:
         if hasattr(self, 'sky'):
             destroy(self.sky)
 
-
+'''
 # Utility function to create a grid model
 def Grid(width: float, depth: float, spacing: float = 50) -> Mesh:
     """Create a grid mesh for better depth perception
@@ -337,7 +489,7 @@ def Grid(width: float, depth: float, spacing: float = 50) -> Mesh:
         ])
     
     return Mesh(vertices=vertices, mode='line')
-
+'''
 
 if __name__ == '__main__':
     # Test visualization
@@ -378,4 +530,3 @@ if __name__ == '__main__':
     
     # Run visualization
     visualizer.run()
-

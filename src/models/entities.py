@@ -94,6 +94,7 @@ class Building:
     - width: size along x-axis
     - depth: size along z-axis
     - height: size along y-axis (vertical)
+    - footprint: optional list of (x, z) tuples describing polygonal base in world coords
     """
     id: int
     position: Position  # Center position (x, height/2, z)
@@ -101,6 +102,7 @@ class Building:
     height: float  # Size along y-axis (vertical)
     depth: float  # Size along z-axis
     entity_type: Optional[EntityType] = None
+    footprint: Optional[List[Tuple[float, float]]] = None
     
     def contains_point(self, pos: Position) -> bool:
         """Check if a 3D point is inside this building"""
