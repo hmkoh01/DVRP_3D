@@ -7,6 +7,7 @@ Author: DVRP Team
 Date: 2025
 """
 
+import argparse
 import sys
 from typing import Optional
 from ursina import *
@@ -19,6 +20,7 @@ sys.path.append('src')
 
 from src.models.entities import Map
 from src.algorithms.map_generator import MapGenerator, DepotPlacer
+from src.algorithms.real_map_generator import RealMapGenerator
 from src.algorithms.clustering import MixedClustering, ClusterAnalyzer
 from src.algorithms.order_manager import OrderManager
 from src.simulation.simulation_engine import SimulationEngine
@@ -29,9 +31,19 @@ import config
 class DVRP3DApplication:
     """Main 3D application class for DVRP simulation using Ursina"""
     
-    def __init__(self, map_seed: Optional[int] = None, order_seed: Optional[int] = None):
+    def __init__(
+        self,
+        map_seed: Optional[int] = None,
+        order_seed: Optional[int] = None,
+        map_source: str = "real",
+        geojson_path: Optional[str] = None,
+        building_limit: Optional[int] = None,
+    ):
         self.map_seed = map_seed
         self.order_seed = order_seed
+        self.map_source = map_source
+        self.geojson_path = geojson_path
+        self.building_limit = building_limit
         
         # Core components
         self.map: Optional[Map] = None
@@ -54,12 +66,7 @@ class DVRP3DApplication:
         try:
             # 1. Generate 3D map with buildings
             print("\n1. 3D 지도 생성 중...")
-            map_generator = MapGenerator(
-                map_width=config.MAP_WIDTH,
-                map_depth=config.MAP_DEPTH,
-                max_height=config.MAX_MAP_HEIGHT,
-                seed=self.map_seed
-            )
+            map_generator = self._create_map_generator()
             self.map = map_generator.generate_map()
             
             # 2. Setup depots using clustering
@@ -166,6 +173,26 @@ class DVRP3DApplication:
         print(f"\n  - Automatically determined optimal k: {optimal_k}")
         print(f"  - Successfully placed Depot 수: {len(depots)}")
         print(f"  - 총 드론 수: {sum(len(depot.drones) for depot in depots)}")
+
+    def _create_map_generator(self) -> MapGenerator:
+        """Instantiate either the real or synthetic map generator."""
+        common_kwargs = dict(
+            map_width=config.MAP_WIDTH,
+            map_depth=config.MAP_DEPTH,
+            max_height=config.MAX_MAP_HEIGHT,
+            seed=self.map_seed,
+        )
+
+        if self.map_source == "real":
+            print("  - Using GeoJSON-based RealMapGenerator")
+            return RealMapGenerator(
+                **common_kwargs,
+                geojson_path=self.geojson_path,
+                building_limit=self.building_limit,
+            )
+
+        print("  - Using synthetic test MapGenerator")
+        return MapGenerator(**common_kwargs)
     
     def _setup_ui(self):
         """Setup UI panels and text"""
@@ -408,14 +435,51 @@ def update():
         app_instance.visualizer.update()
 
 
+def _parse_args():
+    parser = argparse.ArgumentParser(description="DVRP 3D simulator")
+    parser.add_argument(
+        "--map-source",
+        choices=["real", "random"],
+        default=None,
+        help="Override config.MAP_SOURCE to select GeoJSON ('real') or synthetic ('random').",
+    )
+    parser.add_argument(
+        "--geojson-path",
+        type=str,
+        default=None,
+        help="Override config.MAP_GEOJSON_PATH with a custom GeoJSON file.",
+    )
+    parser.add_argument(
+        "--building-limit",
+        type=int,
+        default=None,
+        help="Override config.MAP_BUILDING_LIMIT to cap buildings for quick tests.",
+    )
+    return parser.parse_args()
+
+
 def main():
     """Main function"""
     global app_instance
     
+    args = _parse_args()
+
     MAP_SEED: Optional[int] = config.MAP_SEED
     ORDER_SEED: Optional[int] = config.ORDER_SEED
     
-    app_instance = DVRP3DApplication(map_seed=MAP_SEED, order_seed=ORDER_SEED)
+    map_source = args.map_source or config.MAP_SOURCE
+    geojson_path = args.geojson_path if args.geojson_path is not None else config.MAP_GEOJSON_PATH
+    building_limit = (
+        args.building_limit if args.building_limit is not None else config.MAP_BUILDING_LIMIT
+    )
+
+    app_instance = DVRP3DApplication(
+        map_seed=MAP_SEED,
+        order_seed=ORDER_SEED,
+        map_source=map_source,
+        geojson_path=geojson_path,
+        building_limit=building_limit,
+    )
     
     try:
         if app_instance.initialize():
@@ -436,4 +500,3 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
-

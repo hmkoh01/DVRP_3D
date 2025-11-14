@@ -1,3 +1,6 @@
+from copy import deepcopy
+from pathlib import Path
+
 # Configuration file for DVRP simulation (3D)
 
 RUN_VISUALIZER = False
@@ -9,12 +12,15 @@ if not RUN_VISUALIZER:
 MAP_SEED = 123
 ORDER_SEED = 456
 NODE_OFFSET = 5.0
+MAP_SOURCE = "real"  # "real" to use GeoJSON footprints, "random" for synthetic test map
+MAP_GEOJSON_PATH = "src/map/buildings.geojson"  # Override if your data lives elsewhere
+MAP_BUILDING_LIMIT = None  # Set to int to cap imported buildings for testing
 
 # 3D Map dimensions
-MAP_WIDTH = 1000  # X-axis (horizontal)
+MAP_WIDTH = 2000  # X-axis (horizontal)
 MAP_HEIGHT = 1000  # Z-axis (horizontal, called HEIGHT for backward compatibility)
-MAP_DEPTH = 1000  # Z-axis (depth, same as MAP_HEIGHT)
-MAX_MAP_HEIGHT = 150  # Y-axis (maximum altitude for drones)
+MAP_DEPTH = 2000  # Z-axis (depth, same as MAP_HEIGHT)
+MAX_MAP_HEIGHT = 500  # Y-axis (maximum altitude for drones)
 
 # Building configuration
 TOTAL_BUILDINGS = 30
@@ -22,8 +28,11 @@ BUILDING_MIN_SIZE = 20  # Minimum width/depth
 BUILDING_MAX_SIZE = 80  # Maximum width/depth
 BUILDING_MIN_HEIGHT = 50  # Minimum building height (Y-axis)
 BUILDING_MAX_HEIGHT = 200  # Maximum building height (Y-axis)
-FLOOR_HEIGHT = 10.0  # Height of each floor in meters
+FLOOR_HEIGHT = 3.0  # Height of each floor in meters
 BUILDING_SAFETY_MARGIN = 15.0  # Safety distance between buildings (in meters)
+BUILDING_HEIGHT_SCALE = 1  # Multiplier to globally scale real-world building heights
+VISUALIZATION_HEIGHT_SCALE = 1.0  # Multiplier applied only when rendering in Ursina
+CAMERA_MOVE_SPEED = 200.0  # EditorCamera move speed for visualization (units/sec)
 
 # Building type ratios (should add up to <= 1.0)
 STORE_RATIO = 0.3  # 30% of buildings are stores
@@ -38,8 +47,10 @@ DEPOT_SAFETY_MARGIN = 30.0  # Safety distance from buildings (in meters)
 
 # Simulation configuration
 SIMULATION_SPEED = 1.0  # Real-time multiplier
-ORDER_GENERATION_RATE = 0.001  # Orders per second
+ORDER_GENERATION_RATE = 0.0003  # Orders per second (lower to avoid overload)
 MAX_ORDER_DELAY = 300  # Maximum seconds to wait for order
+ROUTE_RETRY_INTERVAL = 60.0  # Seconds to wait before retrying failed routes
+ROUTE_RETRY_MAX_ATTEMPTS = 3  # How many times to retry routing an order
 
 # Drone configuration
 DRONE_SPEED = 15  # m/s
@@ -78,3 +89,34 @@ TIME_PENALTY = 5 # won / s
 
 # Fixed Cost Weight
 FIXED_COST_WEIGHT = 1 / 365
+
+# Building preprocessing configuration
+PROJECT_ROOT = Path(__file__).resolve().parent
+MAP_DATA_DIR = PROJECT_ROOT / "src" / "map"
+
+BUILDINGS_DATA_CONFIG = {
+    "terrain_contour_paths": [
+        MAP_DATA_DIR / "국가기본공간정보_포스텍_이동_효자_SK뷰" / "NF_L_F01000_L_F01000_000000.shp",
+    ],
+    "spot_elevation_paths": [
+        MAP_DATA_DIR / "국가기본공간정보_포스텍_이동_효자_SK뷰" / "NF_P_F02000_P_F02000_000000.shp",
+    ],
+    "building_paths": [
+        MAP_DATA_DIR / "F_FAC_BUILDING_경북_포항시_남구_북구" / "F_FAC_BUILDING_47111_202507.shp",
+        MAP_DATA_DIR / "F_FAC_BUILDING_경북_포항시_남구_북구" / "F_FAC_BUILDING_47113_202507.shp",
+    ],
+    "output_csv_filename": MAP_DATA_DIR / "postech_building_list.csv",
+    "output_2d_filename": MAP_DATA_DIR / "postech_2d_map.png",
+    "output_3d_filename": MAP_DATA_DIR / "postech_3d_map.png",
+    "output_geojson_filename": MAP_DATA_DIR / "buildings.geojson",
+    "dpi_2d": 300,
+    "dpi_3d": 300,
+}
+
+
+def get_buildings_data_config(overrides=None):
+    """Return a copy of the building preprocessing config with optional overrides."""
+    config = deepcopy(BUILDINGS_DATA_CONFIG)
+    if overrides:
+        config.update(overrides)
+    return config

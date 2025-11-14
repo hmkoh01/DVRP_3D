@@ -5,7 +5,7 @@ Order management system for dynamic order generation and depot assignment (3D)
 import random
 import time
 import math
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional, Tuple, Callable
 # (수정) DroneStatus 임포트
 from ..models.entities import (
     Order, Depot, Drone, OrderStatus, DroneStatus, Position, Store, Customer
@@ -164,6 +164,12 @@ class OrderManager:
         
         # 시각화 설정
         self.first_route_visualized = False
+        self.route_failure_handlers: List[Callable[[Order, str], None]] = []
+
+    def register_route_failure_handler(self, handler: Callable[[Order, str], None]):
+        """Allow external systems (simulation engine) to handle route failures."""
+        if handler not in self.route_failure_handlers:
+            self.route_failure_handlers.append(handler)
     
     def process_orders(self, current_time: float) -> List[Order]:
         new_order = self.order_generator.generate_random_order(current_time)
@@ -185,6 +191,19 @@ class OrderManager:
                 print(f"Order {order.id} expired and cancelled")
         
         return new_completed
+    
+    def retry_order_assignment(self, order: Order):
+        """Expose manual retry hook for failed orders."""
+        if order.status == OrderStatus.CANCELLED:
+            return
+        self._assign_order_to_depot(order)
+
+    def _notify_route_failure(self, order: Order, reason: str):
+        for handler in self.route_failure_handlers:
+            try:
+                handler(order, reason)
+            except Exception as exc:
+                print(f"Route failure handler error: {exc}")
     
     def _assign_order_to_depot(self, order: Order):
         best_depot = self.depot_selector.select_best_depot(order)
@@ -209,16 +228,19 @@ class OrderManager:
                     
                     # (수정) 경로 탐색 실패 시 할당 해제
                     if not route or len(route) < 2:
+                        reason = "fail to find route"
                         print(f"❌ Order {order.id}: Route calculation FAILED")
                         order.status = OrderStatus.PENDING
                         order.assigned_drone = None
                         assigned_drone.current_order = None
                         assigned_drone.status = DroneStatus.IDLE
+                        self._notify_route_failure(order, reason)
                     else:
                         assigned_drone.start_delivery(route)
                         print(f"✓ Order {order.id} assigned to Depot {best_depot.id}, Drone {assigned_drone.id}")
                 
                 except Exception as e:
+                    reason = "exception"
                     print(f"Failed to set route for order {order.id}: {e}")
                     import traceback
                     traceback.print_exc()
@@ -227,6 +249,7 @@ class OrderManager:
                     order.assigned_drone = None
                     assigned_drone.current_order = None
                     assigned_drone.status = DroneStatus.IDLE
+                    self._notify_route_failure(order, reason)
                 
             else:
                 # print(f"No available drones at depot {best_depot.id} for order {order.id}")

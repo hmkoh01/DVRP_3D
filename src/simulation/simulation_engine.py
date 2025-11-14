@@ -42,6 +42,12 @@ class SimulationEngine:
             'charging_cost': 0,
             'penalty_cost': 0
         }
+        self.failed_orders: Dict[int, Dict] = {}
+        self.retry_interval = getattr(config, "ROUTE_RETRY_INTERVAL", 60.0)
+        self.retry_max_attempts = getattr(config, "ROUTE_RETRY_MAX_ATTEMPTS", 3)
+
+        if hasattr(self.order_manager, "register_route_failure_handler"):
+            self.order_manager.register_route_failure_handler(self._handle_route_failure)
     
     def start_simulation(self):
         """Start the simulation"""
@@ -103,6 +109,7 @@ class SimulationEngine:
             
             # Update order manager (process orders, assign to drones)
             completed_orders = self.order_manager.process_orders(self.simulation_time)
+            self._retry_failed_orders()
             
             # Update all drones (3D movement)
             self._update_drones(simulation_delta_time)
@@ -209,6 +216,44 @@ class SimulationEngine:
             # Drone is not inside any building
             # If previously in destination_entry state, reset to none when exiting building
             drone.collision_status = 'none'
+    
+    def _handle_route_failure(self, order: Order, reason: str):
+        """Queue failed orders for retry attempts."""
+        record = self.failed_orders.get(order.id, {'attempts': 0})
+        attempts = record['attempts'] + 1
+        if attempts >= self.retry_max_attempts:
+            order.status = OrderStatus.CANCELLED
+            self.failed_orders.pop(order.id, None)
+            print(f"❌ Order {order.id}: routing failed repeatedly; cancelling (reason={reason}).")
+            return
+        
+        next_retry = self.simulation_time + self.retry_interval
+        self.failed_orders[order.id] = {
+            'order': order,
+            'attempts': attempts,
+            'next_retry': next_retry,
+            'reason': reason
+        }
+        print(f"↻ Order {order.id}: routing failed (attempt {attempts}); retry scheduled at t={next_retry:.1f}s.")
+    
+    def _retry_failed_orders(self):
+        if not self.failed_orders:
+            return
+        
+        ready = [
+            order_id for order_id, data in self.failed_orders.items()
+            if data['next_retry'] <= self.simulation_time
+        ]
+        
+        for order_id in ready:
+            data = self.failed_orders.pop(order_id, None)
+            if not data:
+                continue
+            order = data['order']
+            if order.status in (OrderStatus.CANCELLED, OrderStatus.COMPLETED):
+                continue
+            print(f"🔁 Retrying order {order.id} (attempt {data['attempts'] + 1}).")
+            self.order_manager.retry_order_assignment(order)
     
     def _update_statistics(self, completed_orders: List[Order]):
         """Update simulation statistics"""
