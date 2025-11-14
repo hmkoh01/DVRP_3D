@@ -11,7 +11,7 @@ from ..models.entities import (
     Order, Depot, Drone, OrderStatus, DroneStatus, Position, Store, Customer
 )
 from .clustering import MixedClustering
-from .routing import DroneRouteOptimizer, SimpleRouting, MultiLevelAStarRouting
+from .routing import DroneRouteOptimizer, SimpleRouting, MultiLevelAStarRouting, RouteValidator
 import config
 
 
@@ -185,6 +185,8 @@ class OrderManager:
                 self.orders.remove(order)
                 self.completed_orders.append(order)
                 new_completed.append(order)
+            elif order.status == OrderStatus.CANCELLED:
+                self.orders.remove(order)
             elif order.is_expired(current_time):
                 order.status = OrderStatus.CANCELLED
                 self.orders.remove(order)
@@ -230,12 +232,25 @@ class OrderManager:
                     if not route or len(route) < 2:
                         reason = "fail to find route"
                         print(f"❌ Order {order.id}: Route calculation FAILED")
-                        order.status = OrderStatus.PENDING
-                        order.assigned_drone = None
-                        assigned_drone.current_order = None
-                        assigned_drone.status = DroneStatus.IDLE
+                        self._release_drone(assigned_drone, order)
                         self._notify_route_failure(order, reason)
                     else:
+                        is_valid, reason, message = RouteValidator.validate_route_feasibility(route, assigned_drone)
+                        if not is_valid:
+                            print(f"❌ Order {order.id}: {message}")
+                            if reason == "time_limit":
+                                order.status = OrderStatus.CANCELLED
+                                self._release_drone(assigned_drone, order)
+                                self._notify_route_failure(order, "time_limit")
+                                if order in self.orders:
+                                    self.orders.remove(order)
+                                return
+                            else:
+                                self._release_drone(assigned_drone, order)
+                                order.status = OrderStatus.PENDING
+                                self._notify_route_failure(order, reason or "route_invalid")
+                                return
+
                         assigned_drone.start_delivery(route)
                         print(f"✓ Order {order.id} assigned to Depot {best_depot.id}, Drone {assigned_drone.id}")
                 
@@ -245,18 +260,24 @@ class OrderManager:
                     import traceback
                     traceback.print_exc()
                     # (수정) 예외 발생 시에도 할당 해제
+                    self._release_drone(assigned_drone, order)
                     order.status = OrderStatus.PENDING
-                    order.assigned_drone = None
-                    assigned_drone.current_order = None
-                    assigned_drone.status = DroneStatus.IDLE
                     self._notify_route_failure(order, reason)
                 
             else:
-                # print(f"No available drones at depot {best_depot.id} for order {order.id}")
-                pass
+                print(f"⚠️ Order {order.id}: No drone with sufficient battery at Depot {best_depot.id}")
         else:
             # print(f"No suitable depot found for order {order.id}")
             pass
+
+    def _release_drone(self, drone: Drone, order: Order):
+        """Reset drone/order linkage after failed assignment."""
+        if not drone:
+            return
+        drone.current_order = None
+        drone.status = DroneStatus.IDLE
+        drone.route = None
+        order.assigned_drone = None
     
     def get_order_statistics(self) -> Dict:
         total_orders = len(self.orders) + len(self.completed_orders)

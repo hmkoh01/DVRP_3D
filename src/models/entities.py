@@ -197,12 +197,17 @@ class Depot:
         return [drone for drone in self.drones if drone.status == DroneStatus.IDLE]
     
     def assign_drone(self, order: 'Order') -> Optional['Drone']:
-        """Assign an available drone to an order"""
+        """Assign an available drone with sufficient battery to an order"""
         available_drones = self.get_available_drones()
-        if available_drones:
-            drone = available_drones[0]
-            drone.assign_order(order)
-            return drone
+        if not available_drones:
+            return None
+
+        # Prefer drones with higher battery levels
+        sorted_drones = sorted(available_drones, key=lambda d: d.battery_level, reverse=True)
+        for drone in sorted_drones:
+            if not order or drone.can_complete_order(order):
+                drone.assign_order(order)
+                return drone
         return None
 
 
@@ -322,6 +327,19 @@ class Drone:
                 self.position.x += direction.x * ratio
                 self.position.y += direction.y * ratio
                 self.position.z += direction.z * ratio
+
+    def can_complete_order(self, order: 'Order') -> bool:
+        """Return True if current battery can finish depot->store->customer->depot trip."""
+        if not order:
+            return True
+
+        required_distance = (
+            self.position.distance_to(order.store_position) +
+            order.store_position.distance_to(order.customer_position) +
+            order.customer_position.distance_to(self.depot.get_center())
+        )
+        max_distance = self.battery_level * config.DRONE_BATTERY_LIFE
+        return required_distance <= max_distance
 
 @dataclass
 class Order:

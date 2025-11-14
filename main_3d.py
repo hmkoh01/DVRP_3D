@@ -265,6 +265,9 @@ ESC: Quit
         
         state = self.simulation_engine.get_simulation_state()
         stats = state['stats']
+        fixed_cost = (stats['depot_cost'] + stats['drone_cost']) * config.FIXED_COST_WEIGHT
+        variable_cost = stats['charging_cost'] + stats['penalty_cost']
+        total_cost = fixed_cost + variable_cost
         
         status = "RUNNING" if state['is_running'] else "PAUSED"
         
@@ -279,8 +282,15 @@ Orders:
   
 Stats:
   Deliveries: {stats['total_deliveries_completed']}
+  Fails: {stats.get('failed_orders', 0)}
   Avg Time: {stats['average_delivery_time']:.1f}s
   Distance: {stats['total_drone_distance']:.1f}m
+
+Costs (Won):
+  Fixed: {fixed_cost:,.0f}
+  Charging: {stats['charging_cost']:,.0f}
+  Penalty: {stats['penalty_cost']:,.0f}
+  Total: {total_cost:,.0f}
 """
         
         self.stats_text.text = ui_text
@@ -393,6 +403,7 @@ Stats:
         print(f"완료된 배달: {stats['total_deliveries_completed']}")
         print(f"평균 배달 시간: {stats['average_delivery_time']:.1f}초")
         print(f"총 드론 이동 거리: {stats['total_drone_distance']:.1f}m")
+        print(f"실패한 주문: {stats.get('failed_orders', 0)}")
         
         if stats['total_orders_processed'] > 0:
             success_rate = (stats['total_deliveries_completed'] / stats['total_orders_processed']) * 100
@@ -423,6 +434,8 @@ def update():
         # Update drone visuals
         active_drones = app_instance.simulation_engine.get_active_drones()
         app_instance.visualizer.update_drone_visuals(active_drones)
+        failure_events = app_instance.simulation_engine.get_failure_events()
+        app_instance.visualizer.update_failure_markers(failure_events)
         
         # Update UI
         app_instance._update_ui()

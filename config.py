@@ -3,7 +3,7 @@ from pathlib import Path
 
 # Configuration file for DVRP simulation (3D)
 
-RUN_VISUALIZER = False
+RUN_VISUALIZER = True
 SIMULATION_DELTA_TIME = 0.05 # s
 if not RUN_VISUALIZER:
     SIMULATION_TIME = 3600 # s
@@ -23,7 +23,7 @@ MAP_DEPTH = 2000  # Z-axis (depth, same as MAP_HEIGHT)
 MAX_MAP_HEIGHT = 500  # Y-axis (maximum altitude for drones)
 
 # Building configuration
-TOTAL_BUILDINGS = 30
+TOTAL_BUILDINGS = 100
 BUILDING_MIN_SIZE = 20  # Minimum width/depth
 BUILDING_MAX_SIZE = 80  # Maximum width/depth
 BUILDING_MIN_HEIGHT = 50  # Minimum building height (Y-axis)
@@ -32,7 +32,7 @@ FLOOR_HEIGHT = 3.0  # Height of each floor in meters
 BUILDING_SAFETY_MARGIN = 15.0  # Safety distance between buildings (in meters)
 BUILDING_HEIGHT_SCALE = 1  # Multiplier to globally scale real-world building heights
 VISUALIZATION_HEIGHT_SCALE = 1.0  # Multiplier applied only when rendering in Ursina
-CAMERA_MOVE_SPEED = 200.0  # EditorCamera move speed for visualization (units/sec)
+CAMERA_MOVE_SPEED = 500.0  # EditorCamera move speed for visualization (units/sec)
 
 # Building type ratios (should add up to <= 1.0)
 STORE_RATIO = 0.3  # 30% of buildings are stores
@@ -40,7 +40,7 @@ CUSTOMER_RATIO = 0.5  # 50% of buildings are customers
 # Remaining buildings (20%) will be empty buildings
 
 # Depot configuration
-TOTAL_DEPOTS = 3
+TOTAL_DEPOTS = 5
 DRONES_PER_DEPOT = 5
 DEPOT_SIZE = 20
 DEPOT_SAFETY_MARGIN = 30.0  # Safety distance from buildings (in meters)
@@ -53,15 +53,11 @@ ROUTE_RETRY_INTERVAL = 60.0  # Seconds to wait before retrying failed routes
 ROUTE_RETRY_MAX_ATTEMPTS = 3  # How many times to retry routing an order
 
 # Drone configuration
-DRONE_SPEED = 15  # m/s
+DRONE_SPEED = 30  # m/s
 DRONE_CAPACITY = 1  # Number of orders per drone
 DRONE_BATTERY_LIFE = 25000 # m
 DRONE_CHARGING_SPEED = 0.00455 # /s
 DRONE_BATTERY_CAPACITY = 2 # kWh
-
-# Clustering configuration
-CLUSTERING_ALGORITHM = "kmeans"  # "kmeans" or "dbscan"
-MIN_CLUSTER_SIZE = 5
 
 # Routing visualization
 VISUALIZE_FIRST_ROUTE = False  # Visualize the first delivery route
@@ -86,9 +82,10 @@ DRONE_COST = 1_000_000 # won
 CHARGING_COST = 300 # won / kWh
 TIME_PENALTY_CRITERIA = 120 # s
 TIME_PENALTY = 5 # won / s
+FAILED_ORDER_PENALTY = TIME_PENALTY * TIME_PENALTY_CRITERIA  # won per missed order (matches previous per-second scale)
 
-# Fixed Cost Weight
-FIXED_COST_WEIGHT = 1 / 365
+# Fixed Cost Weight (set to 1.0 to report annualized fixed cost directly)
+FIXED_COST_WEIGHT = 1.0
 
 # Building preprocessing configuration
 PROJECT_ROOT = Path(__file__).resolve().parent

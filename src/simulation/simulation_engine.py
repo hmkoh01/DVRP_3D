@@ -40,11 +40,13 @@ class SimulationEngine:
             'depot_cost': config.TOTAL_DEPOTS * config.DEPOT_COST,
             'drone_cost': config.TOTAL_DEPOTS * config.DRONES_PER_DEPOT * config.DRONE_COST,
             'charging_cost': 0,
-            'penalty_cost': 0
+            'penalty_cost': 0,
+            'failed_orders': 0
         }
         self.failed_orders: Dict[int, Dict] = {}
         self.retry_interval = getattr(config, "ROUTE_RETRY_INTERVAL", 60.0)
         self.retry_max_attempts = getattr(config, "ROUTE_RETRY_MAX_ATTEMPTS", 3)
+        self.failure_events: List[Dict] = []
 
         if hasattr(self.order_manager, "register_route_failure_handler"):
             self.order_manager.register_route_failure_handler(self._handle_route_failure)
@@ -219,11 +221,19 @@ class SimulationEngine:
     
     def _handle_route_failure(self, order: Order, reason: str):
         """Queue failed orders for retry attempts."""
+        if reason == "time_limit":
+            order.status = OrderStatus.CANCELLED
+            self.failed_orders.pop(order.id, None)
+            self._record_failed_order(order, reason)
+            print(f"❌ Order {order.id}: cannot meet time limit, marking as failed.")
+            return
+
         record = self.failed_orders.get(order.id, {'attempts': 0})
         attempts = record['attempts'] + 1
         if attempts >= self.retry_max_attempts:
             order.status = OrderStatus.CANCELLED
             self.failed_orders.pop(order.id, None)
+            self._record_failed_order(order, reason)
             print(f"❌ Order {order.id}: routing failed repeatedly; cancelling (reason={reason}).")
             return
         
@@ -267,8 +277,6 @@ class SimulationEngine:
                 if hasattr(order, 'created_time') and order.created_time is not None:
                     delivery_time = self.simulation_time - order.created_time
                     if delivery_time >= 0:  # Ensure non-negative delivery time
-                        if delivery_time > config.TIME_PENALTY_CRITERIA:
-                            self.stats['penalty_cost'] += (delivery_time - config.TIME_PENALTY_CRITERIA) * config.TIME_PENALTY
                         total_delivery_time += delivery_time
                         valid_orders += 1
             
@@ -349,6 +357,27 @@ class SimulationEngine:
                     active_drones.append(drone)
         
         return active_drones
+
+    def _record_failed_order(self, order: Order, reason: str):
+        penalty_per_fail = getattr(
+            config,
+            "FAILED_ORDER_PENALTY",
+            config.TIME_PENALTY * config.TIME_PENALTY_CRITERIA
+        )
+        self.stats['failed_orders'] += 1
+        self.stats['penalty_cost'] += penalty_per_fail
+        event = {
+            'order_id': order.id,
+            'reason': reason,
+            'customer_position': order.customer_position.copy() if order.customer_position else None,
+            'store_position': order.store_position.copy() if order.store_position else None,
+            'timestamp': self.simulation_time,
+        }
+        self.failure_events.append(event)
+    
+    def get_failure_events(self) -> List[Dict]:
+        """Return recorded failure events (used for visualization)."""
+        return list(self.failure_events)
     
     # Event system
     def _emit_event(self, event_type: str, data: Dict):
@@ -401,8 +430,11 @@ class SimulationEngine:
             'depot_cost': config.TOTAL_DEPOTS * config.DEPOT_COST,
             'drone_cost': config.TOTAL_DEPOTS * config.DRONES_PER_DEPOT * config.DRONE_COST,
             'charging_cost': 0,
-            'penalty_cost': 0
+            'penalty_cost': 0,
+            'failed_orders': 0
         }
+        self.failed_orders.clear()
+        self.failure_events.clear()
         
         # Reset order manager
         self.order_manager.orders = []

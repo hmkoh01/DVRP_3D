@@ -197,12 +197,17 @@ class UrsinaVisualizer:
         self.depot_entities: List[Entity] = []
         self.drone_entities: Dict[int, Entity] = {}  # drone_id -> Entity
         self.drone_labels: Dict[int, Text] = {}  # drone_id -> Text label
+        self.failure_markers: Dict[int, Entity] = {}
         
         # Add lighting
         self.setup_lighting()
 
         # Add sky
         self.sky = Sky()
+        
+    def _format_drone_label(self, drone: Drone) -> str:
+        battery_pct = max(0.0, min(1.0, getattr(drone, 'battery_level', 0.0))) * 100
+        return f"D{drone.id}: {battery_pct:.0f}%"
         
         
     def setup_lighting(self):
@@ -310,7 +315,9 @@ class UrsinaVisualizer:
                     scale=2,
                     color=color.white,
                     billboard=True,
-                    origin=(0, 0)
+                    origin=(0, 0),
+                    world=True,
+                    parent=scene
                 )
                 self.building_entities.append(label)
         
@@ -336,7 +343,9 @@ class UrsinaVisualizer:
                 scale=2.5,
                 color=color.white,
                 billboard=True,
-                origin=(0, 0)
+                origin=(0, 0),
+                world=True,
+                parent=scene
             )
             
             self.depot_entities.append(depot_label)
@@ -392,13 +401,15 @@ class UrsinaVisualizer:
                 
                 # Create label for drone
                 drone_label = Text(
-                    text=f"D{drone.id}",
+                    text=self._format_drone_label(drone),
                     position=(drone.position.x, drone.position.y + 5, drone.position.z),
-                    scale=1.5,
+                    scale=150,
                     color=color.black,
                     billboard=True,
                     origin=(0, 0),
-                    enabled=is_visible
+                    enabled=is_visible,
+                    visible=is_visible,
+                    parent=scene
                 )
                 self.drone_labels[drone.id] = drone_label
             
@@ -418,6 +429,7 @@ class UrsinaVisualizer:
                     # Hide label as well
                     if drone.id in self.drone_labels:
                         self.drone_labels[drone.id].enabled = False
+                        self.drone_labels[drone.id].visible = False
                 
                 elif collision_status == 'accidental':
                     # Show drone in red when accidentally colliding
@@ -428,6 +440,7 @@ class UrsinaVisualizer:
                     # Show label
                     if drone.id in self.drone_labels:
                         self.drone_labels[drone.id].enabled = True
+                        self.drone_labels[drone.id].visible = True
                 
                 else:  # collision_status == 'none'
                     # Show drone in yellow (normal color)
@@ -438,6 +451,7 @@ class UrsinaVisualizer:
                     # Show label
                     if drone.id in self.drone_labels:
                         self.drone_labels[drone.id].enabled = True
+                        self.drone_labels[drone.id].visible = True
                 
                 # Update label position (if visible)
                 if drone.id in self.drone_labels and collision_status != 'destination_entry':
@@ -446,6 +460,7 @@ class UrsinaVisualizer:
                         drone.position.y + 5,
                         drone.position.z
                     )
+                    self.drone_labels[drone.id].text = self._format_drone_label(drone)
         
         # Remove drones that are no longer active
         inactive_drone_ids = set(self.drone_entities.keys()) - active_drone_ids
@@ -467,6 +482,7 @@ class UrsinaVisualizer:
         
         self.drone_entities.clear()
         self.drone_labels.clear()
+        self.clear_failure_markers()
     
     def update(self):
         """Update function called every frame by Ursina"""
@@ -482,6 +498,45 @@ class UrsinaVisualizer:
             print("  - Scroll: Zoom in/out")
             print("  - WASD: Move camera")
             print("  - ESC: Quit application")
+
+    def update_failure_markers(self, failure_events: List[Dict]):
+        if failure_events is None:
+            return
+
+        seen_ids = set()
+        for event in failure_events:
+            order_id = event.get('order_id')
+            if order_id is None:
+                continue
+            seen_ids.add(order_id)
+            if order_id in self.failure_markers:
+                continue
+            position = event.get('customer_position') or event.get('store_position')
+            if position is None:
+                continue
+            marker = Text(
+                text=f"FAIL #{order_id}",
+                position=(position.x, max(position.y, 5) + 10, position.z),
+                scale=2,
+                color=color.red,
+                billboard=True,
+                origin=(0, 0),
+                world=True,
+                parent=scene
+            )
+            self.failure_markers[order_id] = marker
+
+        stale_ids = set(self.failure_markers.keys()) - seen_ids
+        for order_id in stale_ids:
+            entity = self.failure_markers.pop(order_id, None)
+            if entity:
+                destroy(entity)
+
+    def clear_failure_markers(self):
+        for marker in self.failure_markers.values():
+            destroy(marker)
+        self.failure_markers.clear()
+
     
     def run(self):
         """Start the Ursina application loop"""

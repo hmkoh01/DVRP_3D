@@ -555,9 +555,9 @@ class DroneRouteOptimizer:
 class RouteValidator:
     
     @staticmethod
-    def validate_route_feasibility(route: List[Position], drone: Drone) -> Tuple[bool, str]:
+    def validate_route_feasibility(route: List[Position], drone: Drone) -> Tuple[bool, Optional[str], str]:
         if not route:
-            return False, "Empty route"
+            return False, "empty_route", "Empty route"
         
         total_distance = 0
         for i in range(len(route) - 1):
@@ -566,15 +566,15 @@ class RouteValidator:
         max_distance = drone.battery_level * config.DRONE_BATTERY_LIFE
         
         if total_distance > max_distance:
-            return False, f"Route distance {total_distance:.2f} exceeds battery range {max_distance:.2f}"
+            return False, "battery", f"Route distance {total_distance:.2f} exceeds battery range {max_distance:.2f}"
         
         estimated_time = total_distance / drone.speed
         max_delivery_time = config.MAX_ORDER_DELAY
         
         if estimated_time > max_delivery_time:
-            return False, f"Estimated delivery time {estimated_time:.2f}s exceeds maximum {max_delivery_time}s"
+            return False, "time_limit", f"Estimated delivery time {estimated_time:.2f}s exceeds maximum {max_delivery_time}s"
         
-        return True, "Route is feasible"
+        return True, None, "Route is feasible"
     
     @staticmethod
     def validate_route_safety(route: List[Position], map_obj) -> Tuple[bool, str]:
