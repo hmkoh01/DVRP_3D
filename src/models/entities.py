@@ -4,8 +4,8 @@ Entity classes for the DVRP simulation
 
 import math
 import random
-from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional, Tuple
 from enum import Enum
 import config
 
@@ -218,12 +218,26 @@ class Drone:
     position: Position  # 3D position (x, y, z)
     depot: Depot
     status: DroneStatus = DroneStatus.IDLE
-    current_order: Optional['Order'] = None
+    current_order: Optional['Order'] = None  # legacy single-order reference
+    current_orders: List['Order'] = field(default_factory=list)
+    route_waypoint_order_map: Dict[int, 'Order'] = field(default_factory=dict)
     route: List[Position] = None  # List of 3D waypoints
     battery_level: float = 1.0  # 0.0 to 1.0
     speed: float = config.DRONE_SPEED  # horizontal speed (units per second)
     vertical_speed: float = config.DRONE_SPEED * 0.5  # vertical speed (units per second)
     collision_status: str = 'none'  # 'none', 'accidental', 'destination_entry'
+    service_wait_remaining: float = 0.0
+    service_wait_type: Optional[str] = None
+    
+    def __hash__(self):
+        """Make Drone hashable based on its id"""
+        return hash(self.id)
+    
+    def __eq__(self, other):
+        """Compare drones based on their id"""
+        if not isinstance(other, Drone):
+            return False
+        return self.id == other.id
     
     def assign_order(self, order: 'Order'):
         """Assign an order to this drone"""
@@ -234,11 +248,11 @@ class Drone:
     def start_delivery(self, route: List[Position]):
         """Start delivery with given route"""
         if route and len(route) > 1:
-            self.route = route
+            self.route = route.copy()  # 복사본 사용 (원본 리스트가 변경되지 않도록)
             self.status = DroneStatus.FLYING
-            print(f"🚁 Drone {self.id}: Starting delivery with {len(route)} waypoints")
+            print(f"🚁 Drone {self.id}: Starting delivery with {len(route)} waypoints, position: ({self.position.x:.1f}, {self.position.y:.1f}, {self.position.z:.1f})")
         else:
-            print(f"❌ ERROR: Drone {self.id} received invalid route")
+            print(f"❌ ERROR: Drone {self.id} received invalid route (route: {route}, length: {len(route) if route else 0})")
             self.route = None
             self.status = DroneStatus.IDLE
     
@@ -247,6 +261,15 @@ class Drone:
         경로에 따라 드론 위치를 업데이트하고, 각 경유지에 도달할 때마다
         스스로 상태를 올바르게 변경합니다. (3D 이동 지원)
         """
+        if self.service_wait_remaining > 0:
+            self.service_wait_remaining = max(0.0, self.service_wait_remaining - dt)
+            if self.service_wait_remaining == 0:
+                wait_type = self.service_wait_type or "stop"
+                print(f"⏱️  Drone {self.id}: Completed {config.SERVICE_TIME_PER_STOP:.0f}s service wait at {wait_type.upper()}")
+                self.service_wait_type = None
+            else:
+                return
+
         # 경로가 없거나 비어있으면 아무것도 하지 않습니다.
         if not self.route:
             return
@@ -301,14 +324,18 @@ class Drone:
                 self.route.pop(0)  # 경로에서 현재 위치 제거
 
                 if self.status == DroneStatus.FLYING:
-                    # '가게'에 도착했으므로, 이제 '배달 중' 상태로 변경합니다.
                     self.status = DroneStatus.DELIVERING
-                    print(f"✈️  Drone {self.id}: Arrived at STORE")
+                    print(f"✈️  Drone {self.id}: Arrived at STORE, initiating {config.SERVICE_TIME_PER_STOP:.0f}s service wait")
+                    self.service_wait_remaining = config.SERVICE_TIME_PER_STOP
+                    self.service_wait_type = "store"
+                    return
                 
                 elif self.status == DroneStatus.DELIVERING:
-                    # '고객'에게 도착했으므로, 이제 '복귀 중' 상태로 변경합니다.
                     self.status = DroneStatus.RETURNING
-                    print(f"📦 Drone {self.id}: Delivered to CUSTOMER")
+                    print(f"📦 Drone {self.id}: Delivered to CUSTOMER, initiating {config.SERVICE_TIME_PER_STOP:.0f}s service wait")
+                    self.service_wait_remaining = config.SERVICE_TIME_PER_STOP
+                    self.service_wait_type = "customer"
+                    return
 
                 # 경로의 마지막 목적지에 도착했는지 확인합니다.
                 if not self.route:

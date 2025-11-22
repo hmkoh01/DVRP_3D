@@ -12,6 +12,8 @@ from ..models.entities import (
 )
 from .clustering import MixedClustering
 from .routing import DroneRouteOptimizer, SimpleRouting, MultiLevelAStarRouting, RouteValidator
+from .multi_delivery.batch_optimization import BatchOptimizationStrategy
+from .multi_delivery.insertion_heuristic import InsertionHeuristicStrategy
 import config
 
 
@@ -166,6 +168,17 @@ class OrderManager:
         self.first_route_visualized = False
         self.route_failure_handlers: List[Callable[[Order, str], None]] = []
 
+        self.multi_delivery_mode = getattr(config, "MULTI_DELIVERY_ALGORITHM", None)
+        self.batch_strategy = None
+        self.insertion_strategy = None
+
+        if self.multi_delivery_mode == "batch":
+            self.batch_strategy = BatchOptimizationStrategy(self.route_optimizer, map_obj)
+            print("  Multi-delivery mode: Batch Optimization (LNS)")
+        elif self.multi_delivery_mode == "insertion":
+            self.insertion_strategy = InsertionHeuristicStrategy(self.route_optimizer, map_obj)
+            print("  Multi-delivery mode: Real-time Insertion")
+
     def register_route_failure_handler(self, handler: Callable[[Order, str], None]):
         """Allow external systems (simulation engine) to handle route failures."""
         if handler not in self.route_failure_handlers:
@@ -176,12 +189,31 @@ class OrderManager:
         if new_order:
             self.orders.append(new_order)
             print(f"📝 New order #{new_order.id}: Customer {new_order.customer_id} -> Store {new_order.store_id}")
+
+            if self.insertion_strategy:
+                inserted = self.insertion_strategy.assign_order(new_order, current_time)
+                if not inserted:
+                    print(f"⚠️ Order {new_order.id}: Insertion failed, falling back to depot assignment")
+                    self._assign_order_to_depot(new_order)
+            elif self.batch_strategy:
+                self.batch_strategy.add_order_to_batch(new_order)
+            else:
+                self._assign_order_to_depot(new_order)
         
         new_completed = []
+        if self.batch_strategy and self.batch_strategy.should_process_batch(current_time):
+            try:
+                assignments = self.batch_strategy.process_batch(current_time)
+                if assignments:
+                    assigned_count = sum(len(orders) for orders in assignments.values())
+                    print(f"📦 Batch assigned {assigned_count} orders to {len(assignments)} drones")
+            except Exception as e:
+                print(f"❌ Error processing batch: {e}")
+                import traceback
+                traceback.print_exc()
+
         for order in self.orders[:]:
-            if order.status == OrderStatus.PENDING:
-                self._assign_order_to_depot(order)
-            elif order.status == OrderStatus.COMPLETED:
+            if order.status == OrderStatus.COMPLETED:
                 self.orders.remove(order)
                 self.completed_orders.append(order)
                 new_completed.append(order)

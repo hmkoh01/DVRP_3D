@@ -12,9 +12,22 @@ if not RUN_VISUALIZER:
 MAP_SEED = 123
 ORDER_SEED = 456
 NODE_OFFSET = 5.0
-MAP_SOURCE = "real"  # "real" to use GeoJSON footprints, "random" for synthetic test map
+MAP_SOURCE = "random"  # "real" to use GeoJSON footprints, "random" for synthetic test map
 MAP_GEOJSON_PATH = "src/map/buildings.geojson"  # Override if your data lives elsewhere
 MAP_BUILDING_LIMIT = None  # Set to int to cap imported buildings for testing
+
+# Algorithm switch: "batch" for LNS batching, "insertion" for real-time insertion heuristic
+MULTI_DELIVERY_ALGORITHM = "batch"
+
+# Batch optimization (Approach B)
+BATCH_WINDOW_SIZE = 30.0           # seconds
+LNS_ITERATIONS = 20  # 화면 멈춤 방지를 위해 줄임 (기본값: 100)
+LNS_DESTROY_RATIO = 0.3
+
+# Shared feasibility parameters
+BATTERY_SAFETY_MARGIN = 1.4        # multiply straight-line distance to cover A* detours
+CUSTOMER_MAX_WAIT_TIME = 2400      # seconds (40 minutes)
+SERVICE_TIME_PER_STOP = 60.0       # seconds spent for landing/pickup/drop-off
 
 # 3D Map dimensions
 MAP_WIDTH = 2000  # X-axis (horizontal)
@@ -48,12 +61,12 @@ DEPOT_SAFETY_MARGIN = 30.0  # Safety distance from buildings (in meters)
 # Simulation configuration
 SIMULATION_SPEED = 1.0  # Real-time multiplier
 ORDER_GENERATION_RATE = 0.0003  # Orders per second (lower to avoid overload)
-MAX_ORDER_DELAY = 300  # Maximum seconds to wait for order
+MAX_ORDER_DELAY = 3600  # Maximum seconds to wait for order
 ROUTE_RETRY_INTERVAL = 60.0  # Seconds to wait before retrying failed routes
 ROUTE_RETRY_MAX_ATTEMPTS = 3  # How many times to retry routing an order
 
 # Drone configuration
-DRONE_SPEED = 30  # m/s
+DRONE_SPEED = 45  # m/s
 DRONE_CAPACITY = 1  # Number of orders per drone
 DRONE_BATTERY_LIFE = 25000 # m
 DRONE_CHARGING_SPEED = 0.00455 # /s
