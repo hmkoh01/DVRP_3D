@@ -50,10 +50,10 @@ class BatchOptimizationStrategy:
     def process_batch(self, current_time: float) -> Dict[Drone, List[Order]]:
         if not self.pending_batch:
             return {}
-        if self.processing_batch:  # 중복 실행 방지
+        if self.processing_batch:
             return {}
 
-        self.processing_batch = True  # 처리 시작
+        self.processing_batch = True
         try:
             available_drones = self._collect_available_drones()
             if not available_drones:
@@ -66,6 +66,7 @@ class BatchOptimizationStrategy:
             )
 
             assignments = self._apply_solution(solution)
+            
             remaining_orders = solution.unassigned_orders.copy()
             self.pending_batch = remaining_orders
             self.last_batch_time = current_time
@@ -90,21 +91,39 @@ class BatchOptimizationStrategy:
         assignments: Dict[Drone, List[Order]] = {}
         failed_orders: List[Order] = []
 
-        for route in solution.routes:
+        for route_idx, route in enumerate(solution.routes):
             orders = route.get_orders()
             if not orders:
                 continue
 
-            drone = route.drone
+            # 🔧 수정: route.drone은 copy.deepcopy()로 인해 복사본이므로, 
+            # depot에서 실제 드론 객체를 찾아서 사용해야 함
+            route_drone_id = route.drone.id
+            actual_drone = None
+            for depot in self.map.depots:
+                for drone in depot.drones:
+                    if drone.id == route_drone_id:
+                        actual_drone = drone
+                        break
+                if actual_drone:
+                    break
             
-            # 이미 할당된 드론은 건너뛰기
+            if not actual_drone:
+                print(f"      ❌ Drone {route_drone_id} not found in depots, skipping")
+                failed_orders.extend(orders)
+                continue
+            
+            # 🔧 수정: route.drone 대신 actual_drone 사용
+            drone = actual_drone
+            
             if drone.status != DroneStatus.IDLE:
-                print(f"⚠️ Drone {drone.id} is not idle (status: {drone.status}), skipping assignment")
+                print(f"      ⚠️ Drone {drone.id} is not idle (status: {drone.status.value}), skipping assignment")
                 failed_orders.extend(orders)
                 continue
 
             exact_route = self.route_evaluator.calculate_exact_route(route)
             if not exact_route or len(exact_route) < 2:
+                print(f"      ❌ Failed to calculate route or route too short (length: {len(exact_route) if exact_route else 0})")
                 failed_orders.extend(orders)
                 continue
 
@@ -125,11 +144,15 @@ class BatchOptimizationStrategy:
         for order in failed_orders:
             if order not in solution.unassigned_orders:
                 solution.unassigned_orders.append(order)
-
+        
         return assignments
 
     def _build_waypoint_order_map(self, route, exact_route):
-        """Map key waypoints to their respective orders."""
+        """Map key waypoints to their respective orders and visit types.
+        
+        Returns:
+            Dict[int, Tuple[Order, str]]: waypoint 인덱스 -> (Order, visit_type) 매핑
+        """
         mapping = {}
         visit_index = 0
         last_matched_idx = 0
@@ -141,13 +164,15 @@ class BatchOptimizationStrategy:
 
             visit = route.visits[visit_index]
             if waypoint.distance_to(visit.position) <= threshold:
-                mapping[idx] = visit.order
+                # (order, visit_type) 튜플로 저장
+                mapping[idx] = (visit.order, visit.visit_type)
                 visit_index += 1
                 last_matched_idx = idx
 
         # If some visits were not matched (due to numerical issues), map them sequentially
         while visit_index < len(route.visits):
-            mapping[last_matched_idx] = route.visits[visit_index].order
+            visit = route.visits[visit_index]
+            mapping[last_matched_idx] = (visit.order, visit.visit_type)
             visit_index += 1
             last_matched_idx += 1
 

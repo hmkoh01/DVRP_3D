@@ -271,10 +271,18 @@ ESC: Quit
         
         status = "RUNNING" if state['is_running'] else "PAUSED"
         
+        # Get active drone count from visualizer if available
+        active_drones = 0
+        if self.visualizer:
+            active_drones = getattr(self.visualizer, 'active_drone_count', 0)
+        
         ui_text = f"""DVRP 3D Simulation
 Status: {status}
 Speed: {state['speed_multiplier']:.1f}x
 Time: {state['simulation_time']:.1f}s
+
+Drones:
+  Active: {active_drones}
 
 Orders:
   Active: {state['active_orders']}

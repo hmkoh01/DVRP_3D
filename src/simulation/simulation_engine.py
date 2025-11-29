@@ -109,6 +109,19 @@ class SimulationEngine:
             simulation_delta_time = delta_time * self.speed_multiplier
             self.simulation_time += simulation_delta_time
             
+            # 🔍 로그 추가: 주기적 상태 요약 (5초마다)
+            if not hasattr(self, '_last_summary_time'):
+                self._last_summary_time = 0.0
+            if self.simulation_time - self._last_summary_time > 5.0:
+                active_drones = [d for depot in self.map.depots for d in depot.drones if d.status != DroneStatus.IDLE]
+                print(f"\n📊 Simulation Status (t={self.simulation_time:.1f}s):")
+                print(f"   Active drones: {len(active_drones)}")
+                for drone in active_drones:
+                    route_info = f"{len(drone.route)} waypoints" if drone.route else "no route"
+                    print(f"   - Drone {drone.id}: {drone.status.value} | {route_info} | "
+                          f"Pos: ({drone.position.x:.1f}, {drone.position.y:.1f}, {drone.position.z:.1f})")
+                self._last_summary_time = self.simulation_time
+            
             # Update order manager (process orders, assign to drones)
             completed_orders = self.order_manager.process_orders(self.simulation_time)
             self._retry_failed_orders()
@@ -133,6 +146,24 @@ class SimulationEngine:
     
     def _update_drones(self, delta_time: float):
         """Update all drones in the simulation (3D movement)"""
+        # 🔍 로그 추가: FLYING 드론이 있을 때만 상세 로그
+        flying_drones = []
+        for depot in self.map.depots:
+            for drone in depot.drones:
+                if drone.status != DroneStatus.IDLE:
+                    flying_drones.append(drone)
+        
+        # FLYING 드론이 있을 때만 로그 출력 (처음 몇 번만)
+        if flying_drones:
+            if not hasattr(self, '_flying_drones_log_count'):
+                self._flying_drones_log_count = 0
+            self._flying_drones_log_count += 1
+            
+            if self._flying_drones_log_count <= 3 or self._flying_drones_log_count % 100 == 0:
+                print(f"\n🔄 [SimulationEngine._update_drones] Found {len(flying_drones)} non-IDLE drones:")
+                for drone in flying_drones:
+                    print(f"   🚁 Drone {drone.id}: status={drone.status.value}, route={'exists' if drone.route else 'None'}, route_len={len(drone.route) if drone.route else 0}")
+        
         for depot in self.map.depots:
             for drone in depot.drones:
                 if drone.status != DroneStatus.IDLE:
@@ -142,7 +173,34 @@ class SimulationEngine:
                     distance_moved = drone.speed * delta_time
                     self.stats['total_drone_distance'] += distance_moved
                 
+                # 🔍 로그 추가: update_position 호출 전후 위치 확인 (처음 몇 번만)
+                pos_before = None
+                if drone.status != DroneStatus.IDLE:
+                    if not hasattr(self, '_update_drone_pos_log_count'):
+                        self._update_drone_pos_log_count = {}
+                    if drone.id not in self._update_drone_pos_log_count:
+                        self._update_drone_pos_log_count[drone.id] = 0
+                    self._update_drone_pos_log_count[drone.id] += 1
+                    
+                    call_count = self._update_drone_pos_log_count[drone.id]
+                    if call_count <= 3 or call_count % 50 == 0:
+                        pos_before = drone.position.copy()
+                        print(f"🔍 [_update_drones] Before update_position for Drone {drone.id} (call #{call_count}):")
+                        print(f"   Position: ({pos_before.x:.1f}, {pos_before.y:.1f}, {pos_before.z:.1f})")
+                        print(f"   Status: {drone.status.value}, Route length: {len(drone.route) if drone.route else 0}")
+                
                 self._update_drone(drone, delta_time)
+                
+                # 🔍 로그 추가: update_position 호출 후 위치 확인
+                if drone.status != DroneStatus.IDLE and pos_before is not None:
+                    call_count = self._update_drone_pos_log_count[drone.id]
+                    if call_count <= 3 or call_count % 50 == 0:
+                        pos_after = drone.position.copy()
+                        moved = pos_before.distance_to(pos_after)
+                        print(f"🔍 [_update_drones] After update_position for Drone {drone.id}:")
+                        print(f"   Position: ({pos_after.x:.1f}, {pos_after.y:.1f}, {pos_after.z:.1f})")
+                        print(f"   Moved: {moved:.4f}m")
+                        print(f"   Status: {drone.status.value}, Route length: {len(drone.route) if drone.route else 0}")
                 
                 # Check for building collisions and update collision status
                 self._check_drone_collision(drone)
@@ -159,6 +217,31 @@ class SimulationEngine:
             drone: Drone to update
             delta_time: Time elapsed since last update
         """
+        # 🔍 로그 추가: _update_drone 호출 확인 (처음 몇 번만)
+        if not hasattr(self, '_update_drone_call_count'):
+            self._update_drone_call_count = {}
+        if drone.id not in self._update_drone_call_count:
+            self._update_drone_call_count[drone.id] = 0
+        self._update_drone_call_count[drone.id] += 1
+        
+        call_count = self._update_drone_call_count[drone.id]
+        
+        # 🔍 로그 추가: FLYING 상태일 때만 상세 정보 출력 (처음 몇 번만)
+        if drone.status != DroneStatus.IDLE:
+            if not hasattr(self, '_flying_drone_logged'):
+                self._flying_drone_logged = {}
+            if drone.id not in self._flying_drone_logged:
+                self._flying_drone_logged[drone.id] = 0
+            self._flying_drone_logged[drone.id] += 1
+            
+            logged_count = self._flying_drone_logged[drone.id]
+            if logged_count <= 3 or logged_count % 50 == 0:
+                print(f"🚁 [SimulationEngine._update_drone] FLYING Drone {drone.id} (call #{logged_count}):")
+                print(f"   Status: {drone.status.value}, Route: {'exists' if drone.route else 'None'}, Route_len: {len(drone.route) if drone.route else 0}")
+                if drone.route:
+                    print(f"   First waypoint: ({drone.route[0].x:.1f}, {drone.route[0].y:.1f}, {drone.route[0].z:.1f})")
+                    print(f"   Current position: ({drone.position.x:.1f}, {drone.position.y:.1f}, {drone.position.z:.1f})")
+        
         if drone.status == DroneStatus.IDLE:
             # Reset collision status when idle
             drone.collision_status = 'none'
@@ -191,23 +274,34 @@ class SimulationEngine:
             # Drone is inside a building - determine if it's the destination or accidental
             is_destination = False
             
+            # current_order 확인
             if drone.current_order is not None:
                 # Check if this building is the destination (store or customer)
                 if drone.current_order.store_building_id is not None and collided_building.id == drone.current_order.store_building_id:
                     is_destination = True
                 elif drone.current_order.customer_building_id is not None and collided_building.id == drone.current_order.customer_building_id:
                     is_destination = True
+            
+            # current_orders도 확인 (다중 배달 또는 current_order가 None인 경우)
+            if not is_destination and hasattr(drone, 'current_orders') and drone.current_orders:
+                for order in drone.current_orders:
+                    if order.store_building_id is not None and collided_building.id == order.store_building_id:
+                        is_destination = True
+                        break
+                    elif order.customer_building_id is not None and collided_building.id == order.customer_building_id:
+                        is_destination = True
+                        break
+            
+            # 다음 waypoint가 이 건물 안에 있는지 확인 (fallback method)
+            if not is_destination and drone.route and len(drone.route) > 0:
+                target_pos = drone.route[0]
+                distance_to_target = drone.position.distance_to(target_pos)
                 
-                # Also check if the target position is in this building (fallback method)
-                if not is_destination and drone.route and len(drone.route) > 0:
-                    target_pos = drone.route[0]
-                    distance_to_target = drone.position.distance_to(target_pos)
-                    
-                    # If very close to target and inside building containing target
-                    if distance_to_target < config.NODE_OFFSET * 2:
-                        target_building = self.map.get_building_containing_point(target_pos)
-                        if target_building is not None and target_building.id == collided_building.id:
-                            is_destination = True
+                # If very close to target and inside building containing target
+                if distance_to_target < config.NODE_OFFSET * 2:
+                    target_building = self.map.get_building_containing_point(target_pos)
+                    if target_building is not None and target_building.id == collided_building.id:
+                        is_destination = True
             
             # Set collision status based on whether it's a destination
             if is_destination:
@@ -267,6 +361,8 @@ class SimulationEngine:
     
     def _update_statistics(self, completed_orders: List[Order]):
         """Update simulation statistics"""
+        if completed_orders:
+            print(f"📥 [Simulation] Processing {len(completed_orders)} completed orders for stats")
         self.stats['total_orders_processed'] += len(completed_orders)
         
         if completed_orders:
@@ -295,6 +391,10 @@ class SimulationEngine:
                     self.stats['average_delivery_time'] = avg_delivery_time
                 
                 self.stats['total_deliveries_completed'] += valid_orders
+                print(
+                    f"📈 [Simulation] total_deliveries_completed -> {self.stats['total_deliveries_completed']} "
+                    f"(+{valid_orders})"
+                )
         
         self.stats['simulation_duration'] = self.simulation_time
     

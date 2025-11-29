@@ -74,12 +74,14 @@ class LNSSolver:
         """Greedy insertion to build an initial solution."""
         routes: List[Route] = []
         for drone in available_drones:
+            start_pos = drone.position.copy()
+            depot_pos = drone.depot.get_center().copy()
             route = Route(
                 drone_id=drone.id,
                 drone=drone,
                 visits=[],
-                start_position=drone.position.copy(),
-                depot_position=drone.depot.get_center().copy(),
+                start_position=start_pos,
+                depot_position=depot_pos,
                 start_time=current_time,
             )
             routes.append(route)

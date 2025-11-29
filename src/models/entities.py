@@ -4,6 +4,7 @@ Entity classes for the DVRP simulation
 
 import math
 import random
+import time
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 from enum import Enum
@@ -207,6 +208,13 @@ class Depot:
         for drone in sorted_drones:
             if not order or drone.can_complete_order(order):
                 drone.assign_order(order)
+                depot_pos = self.get_center()
+                print(
+                    f"🚚 [Depot.assign_drone] Depot {self.id} -> {drone.id} "
+                    f"(drone_pos=({drone.position.x:.1f}, {drone.position.y:.1f}, {drone.position.z:.1f}), "
+                    f"depot_center=({depot_pos.x:.1f}, {depot_pos.y:.1f}, {depot_pos.z:.1f})) "
+                    f"Order={order.id if order else 'N/A'}"
+                )
                 return drone
         return None
 
@@ -228,6 +236,7 @@ class Drone:
     collision_status: str = 'none'  # 'none', 'accidental', 'destination_entry'
     service_wait_remaining: float = 0.0
     service_wait_type: Optional[str] = None
+    picked_up_orders: List['Order'] = field(default_factory=list)  # 픽업 완료된 주문 (실제 적재 중인 음식)
     
     def __hash__(self):
         """Make Drone hashable based on its id"""
@@ -243,35 +252,88 @@ class Drone:
         """Assign an order to this drone"""
         self.current_order = order
         self.status = DroneStatus.LOADING
-        order.status = OrderStatus.ASSIGNED
+        if order:
+            order.status = OrderStatus.ASSIGNED
     
     def start_delivery(self, route: List[Position]):
         """Start delivery with given route"""
         if route and len(route) > 1:
-            self.route = route.copy()  # 복사본 사용 (원본 리스트가 변경되지 않도록)
-            self.status = DroneStatus.FLYING
-            print(f"🚁 Drone {self.id}: Starting delivery with {len(route)} waypoints, position: ({self.position.x:.1f}, {self.position.y:.1f}, {self.position.z:.1f})")
+            # 🔧 수정: 첫 waypoint가 현재 위치와 동일하면 제거
+            filtered_route = route.copy()
+            skip_count = 0  # route_waypoint_order_map 인덱스 조정용
+            if len(filtered_route) > 0:
+                first_waypoint = filtered_route[0]
+                distance_to_first = self.position.distance_to(first_waypoint)
+                if distance_to_first < 0.1:
+                    print(f"🔧 [Drone.start_delivery] Drone {self.id}: Removing first waypoint (at current position, distance={distance_to_first:.4f}m)")
+                    filtered_route = filtered_route[1:]
+                    skip_count = 1
+            
+            if len(filtered_route) > 0:
+                self.route = filtered_route
+                self.status = DroneStatus.FLYING
+                self._popped_waypoint_count = skip_count  # 건너뛴 waypoint 수로 초기화
+                self.picked_up_orders = []  # 새 배달 시작 시 적재 목록 초기화
+                depot_center = self.depot.get_center() if self.depot else None
+                depot_distance = self.position.distance_to(depot_center) if depot_center else float('nan')
+                print(
+                    f"🚁 [Drone.start_delivery] {self.id} launching with {len(filtered_route)} waypoints | "
+                    f"start_pos=({self.position.x:.1f}, {self.position.y:.1f}, {self.position.z:.1f}) "
+                    f"| depot_center=({depot_center.x:.1f}, {depot_center.y:.1f}, {depot_center.z:.1f}) "
+                    f"| distance_from_depot={depot_distance:.2f}m"
+                )
+                print(f"🚁 Drone {self.id}: Starting delivery with {len(filtered_route)} waypoints")
+            else:
+                print(f"❌ ERROR: Drone {self.id} received invalid route (all waypoints removed)")
+                self.route = None
+                self.status = DroneStatus.IDLE
+                self._popped_waypoint_count = 0
         else:
-            print(f"❌ ERROR: Drone {self.id} received invalid route (route: {route}, length: {len(route) if route else 0})")
+            print(f"❌ ERROR: Drone {self.id} received invalid route (length: {len(route) if route else 0})")
             self.route = None
             self.status = DroneStatus.IDLE
+            self._popped_waypoint_count = 0
     
     def update_position(self, dt: float):
         """
         경로에 따라 드론 위치를 업데이트하고, 각 경유지에 도달할 때마다
         스스로 상태를 올바르게 변경합니다. (3D 이동 지원)
         """
+        # 🔍 로그 추가: update_position 호출 확인 (처음 몇 번만)
+        if not hasattr(self, '_update_call_count'):
+            self._update_call_count = 0
+        self._update_call_count += 1
+        
+        # 🔍 로그 추가: service_wait 상태 확인
         if self.service_wait_remaining > 0:
             self.service_wait_remaining = max(0.0, self.service_wait_remaining - dt)
             if self.service_wait_remaining == 0:
-                wait_type = self.service_wait_type or "stop"
-                print(f"⏱️  Drone {self.id}: Completed {config.SERVICE_TIME_PER_STOP:.0f}s service wait at {wait_type.upper()}")
+                # service_wait 완료 시 항상 로그 출력 (중요한 이벤트)
+                print(f"✅ [update_position] {self.status.value} Drone {self.id}: service_wait completed ({self.service_wait_type}), continuing movement")
+                
+                # 매장에서 픽업 완료 시 picked_up_orders에 추가
+                if self.service_wait_type == "store":
+                    # 방금 도착한 매장의 주문을 찾아서 picked_up_orders에 추가
+                    popped_count = getattr(self, '_popped_waypoint_count', 0)
+                    # 직전에 pop된 waypoint의 메타데이터 확인 (popped_count - 1)
+                    waypoint_meta = self.route_waypoint_order_map.get(popped_count - 1, None) if hasattr(self, 'route_waypoint_order_map') else None
+                    if waypoint_meta is not None:
+                        order, visit_type = waypoint_meta
+                        if visit_type == "store" and order not in self.picked_up_orders:
+                            self.picked_up_orders.append(order)
+                            print(f"📦 Drone {self.id}: Picked up Order {order.id} (now carrying {len(self.picked_up_orders)} orders)")
+                
                 self.service_wait_type = None
             else:
                 return
 
-        # 경로가 없거나 비어있으면 아무것도 하지 않습니다.
         if not self.route:
+            if self.status != DroneStatus.IDLE:
+                if not hasattr(self, '_no_route_warned'):
+                    self._no_route_warned = set()
+                if self.id not in self._no_route_warned:
+                    print(f"⚠️  WARNING: Drone {self.id} has no route but status is {self.status.value}")
+                    self._no_route_warned.add(self.id)
             return
         
         target = self.route[0]
@@ -282,28 +344,110 @@ class Drone:
         )
         distance = self.position.distance_to(target)
 
-        # 이미 목표 지점에 있거나 매우 가까운 경우 즉시 다음 waypoint로
+        # 🔍 로그 추가: DELIVERING 상태일 때 상세 로그
+        if self.status == DroneStatus.DELIVERING:
+            if self._update_call_count <= 3 or self._update_call_count % 50 == 0:
+                print(f"🔍 [update_position] DELIVERING Drone {self.id} (call #{self._update_call_count}):")
+                print(f"   service_wait_remaining: {self.service_wait_remaining:.2f}s")
+                print(f"   service_wait_type: {self.service_wait_type}")
+                print(f"   route length: {len(self.route) if self.route else 0}")
+                if self.route:
+                    print(f"   first waypoint: ({self.route[0].x:.1f}, {self.route[0].y:.1f}, {self.route[0].z:.1f})")
+                print(f"   current position: ({self.position.x:.1f}, {self.position.y:.1f}, {self.position.z:.1f})")
+                print(f"   target: ({target.x:.1f}, {target.y:.1f}, {target.z:.1f})")
+                print(f"   distance: {distance:.4f}m")
+        
+        # 🔍 로그 추가: RETURNING 상태일 때 상세 로그
+        if self.status == DroneStatus.RETURNING:
+            if self._update_call_count <= 3 or self._update_call_count % 50 == 0:
+                print(f"🔍 [update_position] RETURNING Drone {self.id} (call #{self._update_call_count}):")
+                print(f"   service_wait_remaining: {self.service_wait_remaining:.2f}s")
+                print(f"   service_wait_type: {self.service_wait_type}")
+                print(f"   route length: {len(self.route) if self.route else 0}")
+                if self.route:
+                    print(f"   first waypoint: ({self.route[0].x:.1f}, {self.route[0].y:.1f}, {self.route[0].z:.1f})")
+                print(f"   current position: ({self.position.x:.1f}, {self.position.y:.1f}, {self.position.z:.1f})")
+                print(f"   target: ({target.x:.1f}, {target.y:.1f}, {target.z:.1f})")
+                print(f"   distance: {distance:.4f}m")
+        
+        # 🔍 로그 추가: 거리 확인 (처음 몇 번만)
+        if self._update_call_count <= 3 or self._update_call_count % 50 == 0:
+            if self.status not in [DroneStatus.DELIVERING, DroneStatus.RETURNING]:  # DELIVERING과 RETURNING은 위에서 이미 로그 출력
+                print(f"🔍 [update_position] Drone {self.id} (call #{self._update_call_count}):")
+                print(f"   Status: {self.status.value}")
+                print(f"   Target: ({target.x:.1f}, {target.y:.1f}, {target.z:.1f})")
+                print(f"   Current: ({self.position.x:.1f}, {self.position.y:.1f}, {self.position.z:.1f})")
+                print(f"   Distance: {distance:.4f}m")
+                print(f"   Route length: {len(self.route)}")
+
         if distance < 0.1:
+            if self._update_call_count <= 3:
+                print(f"🔍 [update_position] Drone {self.id}: Already at target (distance={distance:.4f}m < 0.1m), popping waypoint")
+            
+            # 현재 waypoint의 메타데이터 확인 (route_waypoint_order_map 사용)
+            current_waypoint_idx = 0  # 항상 route[0]을 처리 중
+            waypoint_meta = self.route_waypoint_order_map.get(self._popped_waypoint_count, None) if hasattr(self, 'route_waypoint_order_map') else None
+            
             self.route.pop(0)
+            if not hasattr(self, '_popped_waypoint_count'):
+                self._popped_waypoint_count = 0
+            self._popped_waypoint_count += 1
             
-            # 상태 전환 (핵심 이벤트만 로그)
-            if self.status == DroneStatus.FLYING:
-                self.status = DroneStatus.DELIVERING
-                print(f"✈️  Drone {self.id}: Arrived at STORE")
-            elif self.status == DroneStatus.DELIVERING:
-                self.status = DroneStatus.RETURNING
-                print(f"📦 Drone {self.id}: Delivered to CUSTOMER")
+            # waypoint 메타데이터에 따라 상태 전환 결정
+            if waypoint_meta is not None:
+                order, visit_type = waypoint_meta
+                if visit_type == "store":
+                    # Store에 도착 - FLYING -> DELIVERING로 전환하고 service_wait 시작
+                    if self.status == DroneStatus.FLYING:
+                        self.status = DroneStatus.DELIVERING
+                        print(f"✈️  Drone {self.id}: Arrived at STORE (Order {order.id})")
+                        self.service_wait_remaining = config.SERVICE_TIME_PER_STOP
+                        self.service_wait_type = "store"
+                        return
+                elif visit_type == "customer":
+                    # Customer에 도착 - 주문 완료 처리
+                    if self.status == DroneStatus.DELIVERING:
+                        order.status = OrderStatus.COMPLETED
+                        print(f"✅ Drone {self.id}: Order {order.id} COMPLETED (delivered to customer)")
+                        # current_orders 리스트에서 완료된 주문 제거
+                        if order in self.current_orders:
+                            self.current_orders.remove(order)
+                        # picked_up_orders에서도 제거 (배달 완료)
+                        if order in self.picked_up_orders:
+                            self.picked_up_orders.remove(order)
+                            print(f"📦 Drone {self.id}: Delivered Order {order.id} (now carrying {len(self.picked_up_orders)} orders)")
+                        if self.current_order == order:
+                            self.current_order = None
+                        
+                        # 다음 주문이 있으면 current_order 갱신
+                        if self.current_orders:
+                            self.current_order = self.current_orders[0]
+                            print(f"📦 Drone {self.id}: Next order is {self.current_order.id}, continuing delivery")
+                            self.service_wait_remaining = config.SERVICE_TIME_PER_STOP
+                            self.service_wait_type = "customer"
+                            return
+                        else:
+                            self.status = DroneStatus.RETURNING
+                            print(f"📦 Drone {self.id}: All deliveries completed, returning to depot")
+                            self.service_wait_remaining = config.SERVICE_TIME_PER_STOP
+                            self.service_wait_type = "customer"
+                            return
+            # waypoint_meta가 None이면 일반 경유지 - 상태 전환 없이 계속 이동
             
-            # 경로의 마지막 목적지에 도착했는지 확인
             if not self.route:
                 if self.status == DroneStatus.RETURNING:
-                    # 배달 완료 처리
-                    if self.current_order:
-                        self.current_order.status = OrderStatus.COMPLETED
-                        print(f"✅ Drone {self.id}: Order {self.current_order.id} COMPLETED")
-                        self.current_order = None
-                    
+                    # 모든 주문이 이미 완료된 상태로 depot에 도착
+                    # 혹시 남은 주문이 있다면 완료 처리
+                    for order in self.current_orders:
+                        if order.status != OrderStatus.COMPLETED:
+                            order.status = OrderStatus.COMPLETED
+                            print(f"✅ Drone {self.id}: Order {order.id} COMPLETED (on depot return)")
+                    self.current_orders.clear()
+                    self.current_order = None
+                    self.picked_up_orders.clear()  # 적재 목록 초기화
                     self.status = DroneStatus.IDLE
+                    self._popped_waypoint_count = 0  # 리셋
+                    print(f"🏠 Drone {self.id}: Returned to depot")
             return
         
         # 목표 지점에 도달할 만큼 가까워졌는지 확인합니다.
@@ -313,47 +457,129 @@ class Drone:
         
         # 수평 및 수직 이동 속도 계산
         effective_speed = self.speed
+        
+        # 🔍 로그 추가: RETURNING 상태일 때 distance > 0 조건 확인
+        if self.status == DroneStatus.RETURNING:
+            if self._update_call_count <= 3 or self._update_call_count % 50 == 0:
+                print(f"🔍 [update_position] RETURNING Drone {self.id}: distance > 0 check")
+                print(f"   distance: {distance:.4f}m")
+                print(f"   Will enter movement logic: {distance > 0}")
+        
         if distance > 0:
             # 전체 이동 거리 기준으로 이동
             move_distance = effective_speed * dt
             self.battery_level -= move_distance / config.DRONE_BATTERY_LIFE
             
+            # 🔍 로그 추가: RETURNING 상태일 때 상세 로그
+            if self.status == DroneStatus.RETURNING:
+                if self._update_call_count <= 3 or self._update_call_count % 50 == 0:
+                    print(f"🔍 [update_position] RETURNING Drone {self.id}: Entering movement logic")
+                    print(f"   distance: {distance:.4f}m")
+                    print(f"   move_distance: {move_distance:.4f}m")
+                    print(f"   effective_speed: {effective_speed:.2f}, dt: {dt:.4f}")
+            
+            # 🔍 로그 추가: 이동 계산 (처음 몇 번만)
+            if self._update_call_count <= 3 or self._update_call_count % 50 == 0:
+                if self.status != DroneStatus.RETURNING:  # RETURNING은 위에서 이미 로그 출력
+                    print(f"🔍 [update_position] Drone {self.id}: move_distance={move_distance:.4f}m, effective_speed={effective_speed:.2f}, dt={dt:.4f}")
+            
             if distance < move_distance:
-                # 목표 지점에 도착
+                if self._update_call_count <= 3:
+                    print(f"🔍 [update_position] Drone {self.id}: Reached target (distance={distance:.4f}m < move_distance={move_distance:.4f}m)")
                 self.position = target.copy()
-                self.route.pop(0)  # 경로에서 현재 위치 제거
-
-                if self.status == DroneStatus.FLYING:
-                    self.status = DroneStatus.DELIVERING
-                    print(f"✈️  Drone {self.id}: Arrived at STORE, initiating {config.SERVICE_TIME_PER_STOP:.0f}s service wait")
-                    self.service_wait_remaining = config.SERVICE_TIME_PER_STOP
-                    self.service_wait_type = "store"
-                    return
                 
-                elif self.status == DroneStatus.DELIVERING:
-                    self.status = DroneStatus.RETURNING
-                    print(f"📦 Drone {self.id}: Delivered to CUSTOMER, initiating {config.SERVICE_TIME_PER_STOP:.0f}s service wait")
-                    self.service_wait_remaining = config.SERVICE_TIME_PER_STOP
-                    self.service_wait_type = "customer"
-                    return
+                # 현재 waypoint의 메타데이터 확인 (route_waypoint_order_map 사용)
+                waypoint_meta = self.route_waypoint_order_map.get(self._popped_waypoint_count, None) if hasattr(self, 'route_waypoint_order_map') else None
+                
+                self.route.pop(0)
+                if not hasattr(self, '_popped_waypoint_count'):
+                    self._popped_waypoint_count = 0
+                self._popped_waypoint_count += 1
+                
+                # waypoint 메타데이터에 따라 상태 전환 결정
+                if waypoint_meta is not None:
+                    order, visit_type = waypoint_meta
+                    if visit_type == "store":
+                        # Store에 도착 - FLYING -> DELIVERING로 전환하고 service_wait 시작
+                        if self.status == DroneStatus.FLYING:
+                            self.status = DroneStatus.DELIVERING
+                            print(f"✈️  Drone {self.id}: Arrived at STORE (Order {order.id})")
+                            self.service_wait_remaining = config.SERVICE_TIME_PER_STOP
+                            self.service_wait_type = "store"
+                            return
+                    elif visit_type == "customer":
+                        # Customer에 도착 - 주문 완료 처리
+                        if self.status == DroneStatus.DELIVERING:
+                            order.status = OrderStatus.COMPLETED
+                            print(f"✅ Drone {self.id}: Order {order.id} COMPLETED (delivered to customer)")
+                            # current_orders 리스트에서 완료된 주문 제거
+                            if order in self.current_orders:
+                                self.current_orders.remove(order)
+                            # picked_up_orders에서도 제거 (배달 완료)
+                            if order in self.picked_up_orders:
+                                self.picked_up_orders.remove(order)
+                                print(f"📦 Drone {self.id}: Delivered Order {order.id} (now carrying {len(self.picked_up_orders)} orders)")
+                            if self.current_order == order:
+                                self.current_order = None
+                            
+                            # 다음 주문이 있으면 current_order 갱신
+                            if self.current_orders:
+                                self.current_order = self.current_orders[0]
+                                print(f"📦 Drone {self.id}: Next order is {self.current_order.id}, continuing delivery")
+                                self.service_wait_remaining = config.SERVICE_TIME_PER_STOP
+                                self.service_wait_type = "customer"
+                                return
+                            else:
+                                self.status = DroneStatus.RETURNING
+                                print(f"📦 Drone {self.id}: All deliveries completed, returning to depot")
+                                self.service_wait_remaining = config.SERVICE_TIME_PER_STOP
+                                self.service_wait_type = "customer"
+                                return
+                # waypoint_meta가 None이면 일반 경유지 - 상태 전환 없이 계속 이동
 
-                # 경로의 마지막 목적지에 도착했는지 확인합니다.
                 if not self.route:
                     if self.status == DroneStatus.RETURNING:
-                        # 배달 완료 처리
-                        if self.current_order:
-                            self.current_order.status = OrderStatus.COMPLETED
-                            print(f"✅ Drone {self.id}: Order {self.current_order.id} COMPLETED")
-                            self.current_order = None
-                        
-                        # 'Depot'에 도착했으므로, '대기' 상태로 전환되어 화면에서 사라집니다.
+                        # 모든 주문이 이미 완료된 상태로 depot에 도착
+                        for order in self.current_orders:
+                            if order.status != OrderStatus.COMPLETED:
+                                order.status = OrderStatus.COMPLETED
+                                print(f"✅ Drone {self.id}: Order {order.id} COMPLETED (on depot return)")
+                        self.current_orders.clear()
+                        self.current_order = None
+                        self.picked_up_orders.clear()  # 적재 목록 초기화
                         self.status = DroneStatus.IDLE
+                        self._popped_waypoint_count = 0  # 리셋
+                        print(f"🏠 Drone {self.id}: Returned to depot")
             else:
-                # 목표 지점을 향해 이동합니다.
                 ratio = move_distance / distance
+                old_position = self.position.copy()
                 self.position.x += direction.x * ratio
                 self.position.y += direction.y * ratio
                 self.position.z += direction.z * ratio
+                
+                # 🔍 로그 추가: RETURNING 상태일 때 이동 확인
+                if self.status == DroneStatus.RETURNING:
+                    if self._update_call_count <= 3 or self._update_call_count % 50 == 0:
+                        moved_distance = old_position.distance_to(self.position)
+                        print(f"🔍 [update_position] RETURNING Drone {self.id}: Moved {moved_distance:.4f}m")
+                        print(f"   Old position: ({old_position.x:.1f}, {old_position.y:.1f}, {old_position.z:.1f})")
+                        print(f"   New position: ({self.position.x:.1f}, {self.position.y:.1f}, {self.position.z:.1f})")
+                        print(f"   New distance to target: {self.position.distance_to(target):.4f}m")
+                
+                # 🔍 로그 추가: 실제 이동 확인 (처음 몇 번만)
+                if self._update_call_count <= 3 or self._update_call_count % 50 == 0:
+                    if self.status != DroneStatus.RETURNING:  # RETURNING은 위에서 이미 로그 출력
+                        moved_distance = old_position.distance_to(self.position)
+                        print(f"🔍 [update_position] Drone {self.id}: Moved {moved_distance:.4f}m")
+                        print(f"   Old position: ({old_position.x:.1f}, {old_position.y:.1f}, {old_position.z:.1f})")
+                        print(f"   New position: ({self.position.x:.1f}, {self.position.y:.1f}, {self.position.z:.1f})")
+                        print(f"   New distance to target: {self.position.distance_to(target):.4f}m")
+        else:
+            # 🔍 로그 추가: distance == 0인 경우 (RETURNING 상태일 때)
+            if self.status == DroneStatus.RETURNING:
+                if self._update_call_count <= 3 or self._update_call_count % 50 == 0:
+                    print(f"🔍 [update_position] RETURNING Drone {self.id}: distance == 0, skipping movement")
+                    print(f"   This means target is at current position, should have been popped earlier")
 
     def can_complete_order(self, order: 'Order') -> bool:
         """Return True if current battery can finish depot->store->customer->depot trip."""

@@ -38,13 +38,42 @@ class RouteEvaluator:
 
     def calculate_exact_route(self, route: Route) -> List[Position]:
         """Generate the full waypoint list using the configured routing algorithm."""
+        print(f"\n🔍 [RouteEvaluator] calculate_exact_route called for Drone {route.drone.id}")
+        print(f"   Route start_position: {route.start_position}")
+        print(f"   Route depot_position: {route.depot_position}")
+        print(f"   Route visits count: {len(route.visits)}")
+        
         if not route.start_position or not route.depot_position:
+            print(f"   ❌ Missing start_position or depot_position, returning empty route")
             return []
 
         waypoints = [visit.position for visit in route.visits]
-        return self.routing_algorithm.calculate_route(
+        print(f"   Waypoints to visit: {len(waypoints)}")
+        for i, wp in enumerate(waypoints):
+            print(f"      Waypoint {i}: ({wp.x:.1f}, {wp.y:.1f}, {wp.z:.1f}) - {route.visits[i].visit_type} for Order {route.visits[i].order_id}")
+        
+        exact_route = self.routing_algorithm.calculate_route(
             route.start_position,
             waypoints,
             route.depot_position,
         )
+        
+        print(f"   ✅ Calculated exact route with {len(exact_route)} waypoints")
+        if exact_route:
+            print(f"      First waypoint: ({exact_route[0].x:.1f}, {exact_route[0].y:.1f}, {exact_route[0].z:.1f})")
+            print(f"      Last waypoint: ({exact_route[-1].x:.1f}, {exact_route[-1].y:.1f}, {exact_route[-1].z:.1f})")
+            
+            # 🔍 로그 추가: 마지막 waypoint가 depot과 일치하는지 확인
+            last_waypoint = exact_route[-1]
+            distance_to_depot = route.depot_position.distance_to(last_waypoint)
+            if distance_to_depot > 0.1:
+                print(f"      ⚠️ WARNING: Last waypoint is NOT at depot position (distance={distance_to_depot:.4f}m)")
+                print(f"         Expected depot: ({route.depot_position.x:.1f}, {route.depot_position.y:.1f}, {route.depot_position.z:.1f})")
+                print(f"         Actual last: ({last_waypoint.x:.1f}, {last_waypoint.y:.1f}, {last_waypoint.z:.1f})")
+            else:
+                print(f"      ✅ Last waypoint is at depot position (distance={distance_to_depot:.4f}m)")
+        else:
+            print(f"      ⚠️ Empty route returned!")
+        
+        return exact_route
 

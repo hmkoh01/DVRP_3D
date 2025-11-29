@@ -214,6 +214,7 @@ class OrderManager:
 
         for order in self.orders[:]:
             if order.status == OrderStatus.COMPLETED:
+                print(f"📊 [OrderManager.process_orders] Order {order.id} marked COMPLETED (queued for removal)")
                 self.orders.remove(order)
                 self.completed_orders.append(order)
                 new_completed.append(order)
@@ -283,8 +284,12 @@ class OrderManager:
                                 self._notify_route_failure(order, reason or "route_invalid")
                                 return
 
+                        # 단일 주문 경로에서도 route_waypoint_order_map 세팅
+                        assigned_drone.route_waypoint_order_map = self._build_single_order_waypoint_map(
+                            route, order
+                        )
+                        assigned_drone.current_orders = [order]
                         assigned_drone.start_delivery(route)
-                        print(f"✓ Order {order.id} assigned to Depot {best_depot.id}, Drone {assigned_drone.id}")
                 
                 except Exception as e:
                     reason = "exception"
@@ -309,7 +314,41 @@ class OrderManager:
         drone.current_order = None
         drone.status = DroneStatus.IDLE
         drone.route = None
+        drone.route_waypoint_order_map = {}
+        drone.current_orders = []
         order.assigned_drone = None
+
+    def _build_single_order_waypoint_map(self, route: List[Position], order: Order) -> dict:
+        """단일 주문 경로에서 store/customer 위치에 해당하는 waypoint 인덱스를 찾아 매핑합니다.
+        
+        Returns:
+            Dict[int, Tuple[Order, str]]: waypoint 인덱스 -> (Order, visit_type) 매핑
+        """
+        mapping = {}
+        threshold = max(config.NODE_OFFSET, 5.0)
+        
+        store_matched = False
+        customer_matched = False
+        
+        for idx, waypoint in enumerate(route):
+            # Store 위치 매칭 (먼저 매칭되어야 함)
+            if not store_matched and waypoint.distance_to(order.store_position) <= threshold:
+                mapping[idx] = (order, "store")
+                store_matched = True
+                print(f"🔍 [_build_single_order_waypoint_map] Matched store at waypoint {idx}")
+            # Customer 위치 매칭 (store 이후에 매칭)
+            elif store_matched and not customer_matched and waypoint.distance_to(order.customer_position) <= threshold:
+                mapping[idx] = (order, "customer")
+                customer_matched = True
+                print(f"🔍 [_build_single_order_waypoint_map] Matched customer at waypoint {idx}")
+        
+        if not store_matched:
+            print(f"⚠️ [_build_single_order_waypoint_map] Store position not matched in route!")
+        if not customer_matched:
+            print(f"⚠️ [_build_single_order_waypoint_map] Customer position not matched in route!")
+        
+        print(f"🔍 [_build_single_order_waypoint_map] Final mapping: {len(mapping)} entries for {len(route)} waypoints")
+        return mapping
     
     def get_order_statistics(self) -> Dict:
         total_orders = len(self.orders) + len(self.completed_orders)

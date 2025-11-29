@@ -420,11 +420,22 @@ class MultiLevelAStarRouting(RoutingAlgorithm):
         is_direct_path_safe = not self._segment_collides_3d(start, end, destination_building_id=dest_id)
 
         if is_direct_path_safe:
+            # 🔍 로그 추가: direct path인 경우
+            if depth == 0:
+                print(f"   🔍 [calculate_route_rec] Direct path safe: [{start.x:.1f}, {start.y:.1f}, {start.z:.1f}] -> [{end.x:.1f}, {end.y:.1f}, {end.z:.1f}]")
             return [start, end]
 
         route = [Position(*p) for p in self._find_path_core(start, end)]
         if not route or len(route) < 2:
             return None
+
+        # 🔍 로그 추가: _find_path_core 결과 확인
+        if depth == 0:
+            print(f"   🔍 [calculate_route_rec] _find_path_core returned {len(route)} waypoints")
+            if route:
+                print(f"      Core route[0]: ({route[0].x:.1f}, {route[0].y:.1f}, {route[0].z:.1f})")
+                distance_to_start = start.distance_to(route[0])
+                print(f"      Distance from start to route[0]: {distance_to_start:.4f}m")
 
         full_route = [route[0]]
         for i in range(len(route) - 1):
@@ -437,26 +448,76 @@ class MultiLevelAStarRouting(RoutingAlgorithm):
 
                 full_route.extend(extended_route[1:])
 
+        # 🔍 로그 추가: 최종 반환 경로 확인
+        if depth == 0:
+            print(f"   🔍 [calculate_route_rec] Returning {len(full_route)} waypoints")
+            if full_route:
+                print(f"      Return route[0]: ({full_route[0].x:.1f}, {full_route[0].y:.1f}, {full_route[0].z:.1f})")
+                distance_to_start = start.distance_to(full_route[0])
+                print(f"      Distance from start to return[0]: {distance_to_start:.4f}m")
+
         return full_route
 
 
     def calculate_route(self, start: Position, waypoints: List[Position], end: Position) -> List[Position]:
         """점진적 경로 탐색(Incremental Pathfinding)을 사용하여 전체 경로를 계산합니다."""
+        print(f"\n🗺️ [MultiLevelAStarRouting.calculate_route] Called")
+        print(f"   Start: ({start.x:.1f}, {start.y:.1f}, {start.z:.1f})")
+        print(f"   Waypoints: {len(waypoints)}")
+        for i, wp in enumerate(waypoints):
+            print(f"      Waypoint {i}: ({wp.x:.1f}, {wp.y:.1f}, {wp.z:.1f})")
+        print(f"   End: ({end.x:.1f}, {end.y:.1f}, {end.z:.1f})")
+        
         full_route = [start]
         segment_targets = waypoints + [end] # 거쳐갈 목표 지점들
 
         current_segment_start = start
 
-        for segment_end in segment_targets:
+        for seg_idx, segment_end in enumerate(segment_targets):
+            print(f"   Calculating segment {seg_idx+1}/{len(segment_targets)}: ({current_segment_start.x:.1f}, {current_segment_start.y:.1f}, {current_segment_start.z:.1f}) -> ({segment_end.x:.1f}, {segment_end.y:.1f}, {segment_end.z:.1f})")
             working_path_segment = self.calculate_route_rec(current_segment_start, segment_end)
             if not working_path_segment:
-                print(f"❌ Routing Error: Path calculation failed")
+                print(f"   ❌ Routing Error: Path calculation failed for segment {seg_idx+1}")
                 return []
             else:
+                print(f"   ✅ Segment {seg_idx+1} calculated: {len(working_path_segment)} waypoints")
+                if working_path_segment:
+                    print(f"      Segment first waypoint: ({working_path_segment[0].x:.1f}, {working_path_segment[0].y:.1f}, {working_path_segment[0].z:.1f})")
+                    print(f"      Segment last waypoint: ({working_path_segment[-1].x:.1f}, {working_path_segment[-1].y:.1f}, {working_path_segment[-1].z:.1f})")
+                    distance_to_start = current_segment_start.distance_to(working_path_segment[0])
+                    print(f"      Distance from segment_start to segment[0]: {distance_to_start:.4f}m")
+                    if distance_to_start < 0.1:
+                        print(f"      ⚠️ Segment[0] is at segment_start, will be skipped by [1:]")
+                
+                # 🔍 로그 추가: extend 전후 경로 길이 확인
+                before_extend = len(full_route)
                 full_route.extend(working_path_segment[1:])
+                after_extend = len(full_route)
+                print(f"      Extended route: {before_extend} -> {after_extend} waypoints (added {after_extend - before_extend})")
 
             current_segment_start = segment_end
 
+        # 🔧 수정: 첫 waypoint가 start와 동일하면 미리 제거 (중복 방지)
+        if full_route and len(full_route) > 1:
+            first_waypoint = full_route[0]
+            distance_to_start = start.distance_to(first_waypoint)
+            if distance_to_start < 0.1:
+                full_route = full_route[1:]
+                print(f"   🔧 Removed duplicate first waypoint (was at start position)")
+        
+        print(f"   ✅ Full route calculated: {len(full_route)} total waypoints")
+        if full_route:
+            print(f"      First: ({full_route[0].x:.1f}, {full_route[0].y:.1f}, {full_route[0].z:.1f})")
+            print(f"      Last: ({full_route[-1].x:.1f}, {full_route[-1].y:.1f}, {full_route[-1].z:.1f})")
+            
+            # 🔍 로그 추가: 마지막 waypoint가 end(depot)와 일치하는지 확인
+            last_waypoint = full_route[-1]
+            distance_to_end = end.distance_to(last_waypoint)
+            if distance_to_end > 0.1:
+                print(f"      ⚠️ WARNING: Last waypoint is NOT at end (depot) position (distance={distance_to_end:.4f}m)")
+                print(f"         Expected depot: ({end.x:.1f}, {end.y:.1f}, {end.z:.1f})")
+                print(f"         Actual last: ({last_waypoint.x:.1f}, {last_waypoint.y:.1f}, {last_waypoint.z:.1f})")
+        
         return full_route
     
     def calculate_distance(self, route: List[Position]) -> float:

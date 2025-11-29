@@ -199,6 +199,9 @@ class UrsinaVisualizer:
         self.drone_labels: Dict[int, Text] = {}  # drone_id -> Text label
         self.failure_markers: Dict[int, Entity] = {}
         
+        # Track active drone count for external access
+        self.active_drone_count = 0
+        
         # Add lighting
         self.setup_lighting()
 
@@ -207,7 +210,9 @@ class UrsinaVisualizer:
         
     def _format_drone_label(self, drone: Drone) -> str:
         battery_pct = max(0.0, min(1.0, getattr(drone, 'battery_level', 0.0))) * 100
-        return f"D{drone.id}: {battery_pct:.0f}%"
+        # 드론이 실제로 적재 중인 음식(픽업 완료된 주문) 개수 표시
+        order_count = len(getattr(drone, 'picked_up_orders', []))
+        return f"D{drone.id}: {battery_pct:.0f}% | x{order_count}"
         
         
     def setup_lighting(self):
@@ -472,6 +477,9 @@ class UrsinaVisualizer:
             if drone_id in self.drone_labels:
                 destroy(self.drone_labels[drone_id])
                 del self.drone_labels[drone_id]
+        
+        # Update active drone count for external access
+        self.active_drone_count = len(active_drone_ids)
     
     def clear_drones(self):
         """Clear all drone entities from the scene"""

@@ -20,14 +20,14 @@ MAP_BUILDING_LIMIT = None  # Set to int to cap imported buildings for testing
 MULTI_DELIVERY_ALGORITHM = "batch"
 
 # Batch optimization (Approach B)
-BATCH_WINDOW_SIZE = 30.0           # seconds
+BATCH_WINDOW_SIZE = 10.0           # seconds
 LNS_ITERATIONS = 20  # 화면 멈춤 방지를 위해 줄임 (기본값: 100)
 LNS_DESTROY_RATIO = 0.3
 
 # Shared feasibility parameters
 BATTERY_SAFETY_MARGIN = 1.4        # multiply straight-line distance to cover A* detours
 CUSTOMER_MAX_WAIT_TIME = 2400      # seconds (40 minutes)
-SERVICE_TIME_PER_STOP = 60.0       # seconds spent for landing/pickup/drop-off
+SERVICE_TIME_PER_STOP = 3.0        # seconds spent for landing/pickup/drop-off (reduced for faster turnaround)
 
 # 3D Map dimensions
 MAP_WIDTH = 2000  # X-axis (horizontal)
@@ -67,7 +67,7 @@ ROUTE_RETRY_MAX_ATTEMPTS = 3  # How many times to retry routing an order
 
 # Drone configuration
 DRONE_SPEED = 45  # m/s
-DRONE_CAPACITY = 1  # Number of orders per drone
+DRONE_CAPACITY = 3  # Number of orders per drone
 DRONE_BATTERY_LIFE = 25000 # m
 DRONE_CHARGING_SPEED = 0.00455 # /s
 DRONE_BATTERY_CAPACITY = 2 # kWh
