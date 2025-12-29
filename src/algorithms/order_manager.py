@@ -126,7 +126,7 @@ class OrderManager:
                 new_completed.append(order)
             elif order.status == OrderStatus.CANCELLED:
                 self.orders.remove(order)
-            elif order.is_expired(current_time):
+            elif order.status == OrderStatus.PENDING and order.is_expired(current_time):
                 order.status = OrderStatus.CANCELLED
                 self.orders.remove(order)
                 print(f"Order {order.id} expired and cancelled")

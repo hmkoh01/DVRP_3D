@@ -6,9 +6,9 @@ from pathlib import Path
 # ============================================
 # SIMULATION MODE: "drone" or "motorbike"
 # ============================================
-SIMULATION_MODE = "drone"  # Change to "motorbike" for baseline comparison
+SIMULATION_MODE = "motorbike"  # Change to "motorbike" for baseline comparison
 
-RUN_VISUALIZER = True
+RUN_VISUALIZER = False
 SIMULATION_DELTA_TIME = 0.05 # s
 if not RUN_VISUALIZER:
     SIMULATION_TIME = 200 # s
@@ -17,7 +17,7 @@ if not RUN_VISUALIZER:
 MAP_SEED = 123
 ORDER_SEED = 456
 NODE_OFFSET = 5.0
-MAP_SOURCE = "random"  # "real" to use GeoJSON footprints, "random" for synthetic test map
+MAP_SOURCE = "real"  # "real" to use GeoJSON footprints, "random" for synthetic test map
 MAP_GEOJSON_PATH = "src/map/buildings.geojson"  # Override if your data lives elsewhere
 MAP_BUILDING_LIMIT = None  # Set to int to cap imported buildings for testing
 
@@ -142,21 +142,21 @@ MAP_DATA_DIR = PROJECT_ROOT / "src" / "map"
 
 BUILDINGS_DATA_CONFIG = {
     "terrain_contour_paths": [
-        MAP_DATA_DIR / "국가기본공간정보_서울_영등포구" / "NF_L_F01000_L_F01000_000000.shp",
-        #MAP_DATA_DIR / "국가기본공간정보_포스텍_이동_효자_SK뷰" / "NF_L_F01000_L_F01000_000000.shp",
+        #MAP_DATA_DIR / "국가기본공간정보_서울_영등포구" / "NF_L_F01000_L_F01000_000000.shp",
+        MAP_DATA_DIR / "국가기본공간정보_포스텍_이동_효자_SK뷰" / "NF_L_F01000_L_F01000_000000.shp",
     ],
     "spot_elevation_paths": [
-        MAP_DATA_DIR / "국가기본공간정보_서울_영등포구" / "NF_P_F02000_P_F02000_000000.shp",
-        #MAP_DATA_DIR / "국가기본공간정보_포스텍_이동_효자_SK뷰" / "NF_P_F02000_P_F02000_000000.shp",
+        #MAP_DATA_DIR / "국가기본공간정보_서울_영등포구" / "NF_P_F02000_P_F02000_000000.shp",
+        MAP_DATA_DIR / "국가기본공간정보_포스텍_이동_효자_SK뷰" / "NF_P_F02000_P_F02000_000000.shp",
     ],
     "building_paths": [
-        MAP_DATA_DIR / "F_FAC_BUILDING_서울_영등포구" / "F_FAC_BUILDING_11560_202512.shp",
-        #MAP_DATA_DIR / "F_FAC_BUILDING_경북_포항시_남구_북구" / "F_FAC_BUILDING_47111_202507.shp",
-        #MAP_DATA_DIR / "F_FAC_BUILDING_경북_포항시_남구_북구" / "F_FAC_BUILDING_47113_202507.shp",
+        #MAP_DATA_DIR / "F_FAC_BUILDING_서울_영등포구" / "F_FAC_BUILDING_11560_202512.shp",
+        MAP_DATA_DIR / "F_FAC_BUILDING_경북_포항시_남구_북구" / "F_FAC_BUILDING_47111_202507.shp",
+        MAP_DATA_DIR / "F_FAC_BUILDING_경북_포항시_남구_북구" / "F_FAC_BUILDING_47113_202507.shp",
     ],
-    "output_csv_filename": MAP_DATA_DIR / "seoul_building_list.csv",
-    "output_2d_filename": MAP_DATA_DIR / "seoul_2d_map.png",
-    "output_3d_filename": MAP_DATA_DIR / "seoul_3d_map.png",
+    "output_csv_filename": MAP_DATA_DIR / "building_list.csv",
+    "output_2d_filename": MAP_DATA_DIR / "2d_map.png",
+    "output_3d_filename": MAP_DATA_DIR / "3d_map.png",
     "output_geojson_filename": MAP_DATA_DIR / "buildings.geojson",
     "dpi_2d": 300,
     "dpi_3d": 300,
@@ -166,6 +166,37 @@ BUILDINGS_DATA_CONFIG = {
 def get_buildings_data_config(overrides=None):
     """Return a copy of the building preprocessing config with optional overrides."""
     config = deepcopy(BUILDINGS_DATA_CONFIG)
+    if overrides:
+        config.update(overrides)
+    return config
+
+# Road network preprocessing configuration
+ROAD_DATA_CONFIG = {
+    "data_dir": MAP_DATA_DIR / "국가기본공간정보_포스텍_이동_효자_SK뷰_도로",
+    "surface_filename": "NF_A_A01000_A_A01000_000000.shp",       # Road surface polygons
+    "centerline_filename": "NF_L_A01000_L_A01000_000000.shp",    # Road centerlines
+    "boundary_filename": "NF_L_A03011_L_A03011_000000.shp",      # Road edges/curbs
+    "terrain_paths": BUILDINGS_DATA_CONFIG["terrain_contour_paths"],  # For spatial filtering/alignment
+    "encoding": "EUC-KR",
+    # Preprocessing/cache
+    "cache_geojson_path": MAP_DATA_DIR / "road_network.geojson",
+    "use_cache": True,      # Prefer cached geojson if it exists
+    "write_cache": False,   # Do not auto-write on load (use the preprocessing script)
+    "bounds_from_buildings_geojson": MAP_GEOJSON_PATH,  # Use building bounds for consistent scaling
+    "margin_m": 10.0,       # Same margin as RealMapGenerator scaling
+    "output_2d_filename": MAP_DATA_DIR / "road_map.png",
+    "dpi_2d": 300,
+    "lane_width_m": 3.25,
+    "sidewalk_width_m": 3.0,
+    "dash_length_m": 6.0,
+    "dash_gap_m": 6.0,
+    "lane_endpoint_length_m": 12.0,  # Only draw lane markings near ends (meters)
+}
+
+
+def get_road_data_config(overrides=None):
+    """Return a copy of the road preprocessing config with optional overrides."""
+    config = deepcopy(ROAD_DATA_CONFIG)
     if overrides:
         config.update(overrides)
     return config

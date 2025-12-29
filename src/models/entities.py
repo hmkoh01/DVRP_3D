@@ -5,13 +5,17 @@ Entity classes for the DVRP simulation
 import math
 import random
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
 from enum import Enum
 from shapely.geometry import Polygon, Point, box
 from shapely.strtree import STRtree
+from shapely.ops import nearest_points
 import config
 
 EPSILON = 1e-6
+
+if TYPE_CHECKING:
+    from src.map.road_processing import RoadNetwork
 
 class EntityType(Enum):
     STORE = "store"
@@ -257,6 +261,7 @@ class Depot:
     position: Position
     drones: List['Drone']
     capacity: int = 5
+    map: Optional['Map'] = None  # Reference to owning map (for bounds)
     
     def __post_init__(self):
         if not hasattr(self, 'drones') or self.drones is None:
@@ -697,9 +702,26 @@ class Motorbike:
     
     def _clamp_to_map_bounds(self, x: float, z: float) -> tuple:
         """Clamp position to stay within map boundaries."""
+        # Prefer actual map bounds when depot knows the map
+        map_obj = getattr(self.depot, "map", None)
+
+        # 1) Boundary polygon if available (real map)
+        boundary_shape = getattr(map_obj, "boundary_shape", None) if map_obj else None
+        if boundary_shape:
+            pt = Point(x, z)
+            if boundary_shape.contains(pt):
+                return x, z
+            nearest = nearest_points(boundary_shape, pt)[0]
+            return float(nearest.x), float(nearest.y)
+
+        # 2) Use map dimensions (real map sets width/depth to actual size)
         margin = 5.0
-        map_width = getattr(config, 'MAP_WIDTH', 2000)
-        map_depth = getattr(config, 'MAP_DEPTH', 2000)
+        map_width = getattr(map_obj, "width", None) if map_obj else None
+        map_depth = getattr(map_obj, "depth", None) if map_obj else None
+
+        if map_width is None or map_depth is None:
+            map_width = getattr(config, 'MAP_WIDTH', 2000)
+            map_depth = getattr(config, 'MAP_DEPTH', 2000)
         
         clamped_x = max(margin, min(map_width - margin, x))
         clamped_z = max(margin, min(map_depth - margin, z))
@@ -924,6 +946,9 @@ class Map:
         self.stores: List['Store'] = []  # Store objects on various floors
         self.customers: List['Customer'] = []  # Customer objects on various floors
         self.tree = None
+        self.road_network: Optional['RoadNetwork'] = None
+        self.boundary_polygon: Optional[List[Tuple[float, float]]] = None  # Optional outer boundary (scaled coords)
+        self.boundary_shape = None  # Optional shapely polygon for boundary
     
     def add_building(self, building: Building):
         """Add a building to the map"""
