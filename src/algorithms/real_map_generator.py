@@ -10,10 +10,10 @@ from pathlib import Path
 from typing import Iterable, List, Optional, Sequence, Tuple
 
 import config
-from ..map import buildings_processing
+from ..map import buildings_processing, road_processing
 from ..models.entities import Building, Map, Position
 from .map_generator import MapGenerator
-from shapely.geometry import Polygon
+from shapely.geometry import Polygon, MultiPoint
 from shapely.strtree import STRtree
 from shapely.ops import unary_union
 
@@ -68,7 +68,13 @@ class RealMapGenerator(MapGenerator):
             random.seed(self.seed)
 
         features = self._load_features()
-        buildings = self._buildings_from_features(features)
+        bounds = self._compute_bounds(features)
+        scale_x, scale_z, offset_x, offset_z = self._compute_scaling(bounds)
+        buildings = self._buildings_from_features(
+            features,
+            bounds=bounds,
+            scaling=(scale_x, scale_z, offset_x, offset_z)
+        )
         print(f"Loaded {len(buildings)} buildings from GeoJSON")
         
         # Update map dimensions to match actual data bounds
@@ -76,6 +82,25 @@ class RealMapGenerator(MapGenerator):
             self.map.width = self._actual_width
             self.map.depth = self._actual_depth
             print(f"Map dimensions updated to: {self._actual_width:.1f}m x {self._actual_depth:.1f}m")
+
+        # Load road geometries aligned with the same bounds/offsets
+        try:
+            road_net = road_processing.load_road_network(
+                bounds=bounds,
+                scale_x=scale_x,
+                scale_z=scale_z,
+                offset_x=offset_x,
+                offset_z=offset_z,
+            )
+            self.map.road_network = road_net
+            print(
+                f"Loaded road network: surfaces={len(road_net.surfaces)}, "
+                f"lanes={len(road_net.lane_markings)}, crosswalks={len(road_net.paint_patches)}"
+            )
+        except FileNotFoundError as e:
+            print(f"[road] 파일을 찾을 수 없습니다: {e}")
+        except Exception as e:
+            print(f"[road] 로딩 중 오류 발생: {e}")
 
         for building in buildings:
             self.map.add_building(building)
@@ -109,7 +134,12 @@ class RealMapGenerator(MapGenerator):
             raise ValueError(f"No features found in {self.geojson_path}")
         return features
 
-    def _buildings_from_features(self, features: Sequence[dict]) -> List[Building]:
+    def _buildings_from_features(
+        self,
+        features: Sequence[dict],
+        bounds: Optional[Tuple[float, float, float, float]] = None,
+        scaling: Optional[Tuple[float, float, float, float]] = None
+    ) -> List[Building]:
         def find(parent, x):
             if parent[x] != x:
                 parent[x] = find(parent, parent[x])
@@ -123,10 +153,15 @@ class RealMapGenerator(MapGenerator):
                 return True
             return False
 
-        bounds = self._compute_bounds(features)
-        scale_x, scale_z, offset_x, offset_z = self._compute_scaling(bounds)
+        if bounds is None:
+            bounds = self._compute_bounds(features)
+        if scaling is None:
+            scale_x, scale_z, offset_x, offset_z = self._compute_scaling(bounds)
+        else:
+            scale_x, scale_z, offset_x, offset_z = scaling
 
         footprints: List[List[Tuple[float, float]]] = []
+        all_points_scaled: List[Tuple[float, float]] = []
         merging_polygons: List[Polygon] = []
         heights: List[int] = []
 
@@ -157,6 +192,7 @@ class RealMapGenerator(MapGenerator):
             footprints.append(footprint)
             merging_polygons.append(polygon)
             heights.append(height)
+            all_points_scaled.extend(footprint)
 
         n = len(merging_polygons)
         independent_polygon_num = n
@@ -222,6 +258,15 @@ class RealMapGenerator(MapGenerator):
             assert isinstance(building.outer_poly, Polygon), building.outer_poly
             assert isinstance(building.inner_poly, Polygon), building.inner_poly
             buildings.append(building)
+
+        # Save convex hull of all scaled points as optional boundary polygon
+        if all_points_scaled:
+            hull = MultiPoint(all_points_scaled).convex_hull
+            if isinstance(hull, Polygon):
+                hull_coords = list(hull.exterior.coords)[:-1]
+                self.map.boundary_polygon = [(float(x), float(z)) for x, z in hull_coords]
+                # Cache shapely polygon for quick boundary checks (motorbike clamping)
+                self.map.boundary_shape = hull
 
         return buildings
 

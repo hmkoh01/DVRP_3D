@@ -495,6 +495,8 @@ class DepotPlacer:
                 drones=[],  # Will hold either drones or motorbikes
                 capacity=vehicles_per_depot
             )
+            # Attach map reference so vehicles can access real bounds
+            depot.map = self.map
             
             # 2. Create vehicles based on simulation mode
             vehicles = []
